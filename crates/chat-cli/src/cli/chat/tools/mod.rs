@@ -111,7 +111,13 @@ impl Tool {
             Tool::GhIssue(_) => PermissionEvalResult::Allow,
             Tool::Thinking(_) => PermissionEvalResult::Allow,
             Tool::Knowledge(_) => PermissionEvalResult::Ask,
-            Tool::SubAgentWrapper(_) => PermissionEvalResult::Ask,
+            Tool::SubAgentWrapper(_) => {
+                if agent.allowed_tools.contains("launch_agent") {
+                    PermissionEvalResult::Allow
+                } else {
+                    PermissionEvalResult::Ask
+                }
+            },
         }
     }
 
