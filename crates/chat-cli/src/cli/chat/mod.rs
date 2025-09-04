@@ -147,7 +147,7 @@ use crate::cli::TodoListState;
 use crate::cli::agent::Agents;
 use crate::cli::chat::cli::SlashCommand;
 use crate::cli::chat::cli::editor::open_editor;
-use crate::cli::chat::cli::model::find_model;
+use crate::cli::chat::cli::model::{context_window_tokens, find_model};
 use crate::cli::chat::cli::prompts::{
     GetPromptError,
     PromptsSubcommand,
@@ -755,7 +755,7 @@ impl ChatSession {
         let mut tokens_guard = tokens_used.lock().await;
         *tokens_guard = *data.context_messages + *data.assistant_messages + *data.user_messages;
         let mut percent_guard = context_window_percent.lock().await;
-        *percent_guard = (*tokens_guard as f32 / consts::CONTEXT_WINDOW_SIZE as f32) * 100.0;
+        *percent_guard = (*tokens_guard as f32 / context_window_tokens(self.conversation.model_info.as_ref()) as f32) * 100.0;
         let mut status_guard = status.lock().await;
         let default_state = ChatState::default();
         let current_chat_state = self.inner.as_ref().unwrap_or(&default_state);
