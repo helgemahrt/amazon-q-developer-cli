@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use crossterm::{
     queue,
     style,
 };
 use eyre::Result;
+use regex::Regex;
 use schemars::JsonSchema;
 use serde::{
     Deserialize,
@@ -30,12 +30,13 @@ use crate::mcp_client::{
     JsonRpcStdioTransport,
     MessageContent,
     Messenger,
-    PromptGet,
     ServerCapabilities,
     StdioTransport,
     ToolCallResult,
 };
 use crate::os::Os;
+use crate::util::MCP_SERVER_TOOL_DELIMITER;
+use crate::util::pattern_matching::matches_any_pattern;
 
 // TODO: support http transport type
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq, JsonSchema)]
@@ -63,6 +64,26 @@ pub fn default_timeout() -> u64 {
     120 * 1000
 }
 
+/// Substitutes environment variables in the format ${env:VAR_NAME} with their actual values
+fn substitute_env_vars(input: &str, env: &crate::os::Env) -> String {
+    // Create a regex to match ${env:VAR_NAME} pattern
+    let re = Regex::new(r"\$\{env:([^}]+)\}").unwrap();
+
+    re.replace_all(input, |caps: &regex::Captures<'_>| {
+        let var_name = &caps[1];
+        env.get(var_name).unwrap_or_else(|_| format!("${{{}}}", var_name))
+    })
+    .to_string()
+}
+
+/// Process a HashMap of environment variables, substituting any ${env:VAR_NAME} patterns
+/// with their actual values from the environment
+fn process_env_vars(env_vars: &mut HashMap<String, String>, env: &crate::os::Env) {
+    for (_, value) in env_vars.iter_mut() {
+        *value = substitute_env_vars(value, env);
+    }
+}
+
 #[derive(Debug)]
 pub enum CustomToolClient {
     Stdio {
@@ -75,7 +96,7 @@ pub enum CustomToolClient {
 
 impl CustomToolClient {
     // TODO: add support for http transport
-    pub fn from_config(server_name: String, config: CustomToolConfig) -> Result<Self> {
+    pub fn from_config(server_name: String, config: CustomToolConfig, os: &crate::os::Os) -> Result<Self> {
         let CustomToolConfig {
             command,
             args,
@@ -84,6 +105,13 @@ impl CustomToolClient {
             disabled: _,
             ..
         } = config;
+
+        // Process environment variables if present
+        let processed_env = env.map(|mut env_vars| {
+            process_env_vars(&mut env_vars, &os.env);
+            env_vars
+        });
+
         let mcp_client_config = McpClientConfig {
             server_name: server_name.clone(),
             bin_path: command.clone(),
@@ -93,7 +121,7 @@ impl CustomToolClient {
                "name": "Q CLI Chat",
                "version": "1.0.0"
             }),
-            env,
+            env: processed_env,
         };
         let client = McpClient::<JsonRpcStdioTransport>::from_config(mcp_client_config)?;
         Ok(CustomToolClient::Stdio {
@@ -144,9 +172,9 @@ impl CustomToolClient {
         }
     }
 
-    pub fn list_prompt_gets(&self) -> Arc<std::sync::RwLock<HashMap<String, PromptGet>>> {
+    pub fn get_pid(&self) -> Option<u32> {
         match self {
-            CustomToolClient::Stdio { client, .. } => client.prompt_gets.clone(),
+            CustomToolClient::Stdio { client, .. } => client.server_process_id.as_ref().map(|pid| pid.as_u32()),
         }
     }
 
@@ -154,18 +182,6 @@ impl CustomToolClient {
     pub async fn notify(&self, method: &str, params: Option<serde_json::Value>) -> Result<()> {
         match self {
             CustomToolClient::Stdio { client, .. } => Ok(client.notify(method, params).await?),
-        }
-    }
-
-    pub fn is_prompts_out_of_date(&self) -> bool {
-        match self {
-            CustomToolClient::Stdio { client, .. } => client.is_prompts_out_of_date.load(Ordering::Relaxed),
-        }
-    }
-
-    pub fn prompts_updated(&self) {
-        match self {
-            CustomToolClient::Stdio { client, .. } => client.is_prompts_out_of_date.store(false, Ordering::Relaxed),
         }
     }
 }
@@ -259,8 +275,7 @@ impl CustomTool {
             + TokenCounter::count_tokens(self.params.as_ref().map_or("", |p| p.as_str().unwrap_or_default()))
     }
 
-    pub fn eval_perm(&self, agent: &Agent) -> PermissionEvalResult {
-        use crate::util::MCP_SERVER_TOOL_DELIMITER;
+    pub fn eval_perm(&self, _os: &Os, agent: &Agent) -> PermissionEvalResult {
         let Self {
             name: tool_name,
             client,
@@ -268,14 +283,71 @@ impl CustomTool {
         } = self;
         let server_name = client.get_server_name();
 
-        if agent.allowed_tools.contains(&format!("@{server_name}"))
-            || agent
-                .allowed_tools
-                .contains(&format!("@{server_name}{MCP_SERVER_TOOL_DELIMITER}{tool_name}"))
-        {
-            PermissionEvalResult::Allow
-        } else {
-            PermissionEvalResult::Ask
+        let server_pattern = format!("@{server_name}");
+        if agent.allowed_tools.contains(&server_pattern) {
+            return PermissionEvalResult::Allow;
         }
+
+        let tool_pattern = format!("@{server_name}{MCP_SERVER_TOOL_DELIMITER}{tool_name}");
+        if matches_any_pattern(&agent.allowed_tools, &tool_pattern) {
+            return PermissionEvalResult::Allow;
+        }
+
+        PermissionEvalResult::Ask
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_substitute_env_vars() {
+        // Set a test environment variable
+        let os = Os::new().await.unwrap();
+        unsafe {
+            os.env.set_var("TEST_VAR", "test_value");
+        }
+
+        // Test basic substitution
+        assert_eq!(
+            substitute_env_vars("Value is ${env:TEST_VAR}", &os.env),
+            "Value is test_value"
+        );
+
+        // Test multiple substitutions
+        assert_eq!(
+            substitute_env_vars("${env:TEST_VAR} and ${env:TEST_VAR}", &os.env),
+            "test_value and test_value"
+        );
+
+        // Test non-existent variable
+        assert_eq!(
+            substitute_env_vars("${env:NON_EXISTENT_VAR}", &os.env),
+            "${NON_EXISTENT_VAR}"
+        );
+
+        // Test mixed content
+        assert_eq!(
+            substitute_env_vars("Prefix ${env:TEST_VAR} suffix", &os.env),
+            "Prefix test_value suffix"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_env_vars() {
+        let os = Os::new().await.unwrap();
+        unsafe {
+            os.env.set_var("TEST_VAR", "test_value");
+        }
+
+        let mut env_vars = HashMap::new();
+        env_vars.insert("KEY1".to_string(), "Value is ${env:TEST_VAR}".to_string());
+        env_vars.insert("KEY2".to_string(), "No substitution".to_string());
+
+        process_env_vars(&mut env_vars, &os.env);
+
+        assert_eq!(env_vars.get("KEY1").unwrap(), "Value is test_value");
+        assert_eq!(env_vars.get("KEY2").unwrap(), "No substitution");
     }
 }

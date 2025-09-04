@@ -7,6 +7,7 @@ mod input_source;
 mod message;
 mod parse;
 use std::path::MAIN_SEPARATOR;
+mod line_tracker;
 mod parser;
 mod prompt;
 mod prompt_parser;
@@ -17,7 +18,6 @@ mod token_counter;
 pub mod tool_manager;
 pub mod tools;
 pub mod util;
-
 use std::borrow::Cow;
 use std::collections::{
     HashMap,
@@ -43,7 +43,10 @@ use clap::{
     Parser,
 };
 use cli::compact::CompactStrategy;
-use cli::model::select_model;
+use cli::model::{
+    get_available_models,
+    select_model,
+};
 pub use conversation::ConversationState;
 use conversation::TokenWarningLevel;
 use crossterm::style::{
@@ -99,6 +102,8 @@ use tokio::sync::{
     broadcast,
 };
 use tool_manager::{
+    PromptQuery,
+    PromptQueryResult,
     ToolManager,
     ToolManagerBuilder,
 };
@@ -126,7 +131,11 @@ use util::{
 use winnow::Partial;
 use winnow::stream::Offset;
 
-use super::agent::PermissionEvalResult;
+use super::agent::{
+    Agent,
+    DEFAULT_AGENT_NAME,
+    PermissionEvalResult,
+};
 use crate::api_client::model::ToolResultStatus;
 use crate::api_client::{
     self,
@@ -134,16 +143,16 @@ use crate::api_client::{
 };
 use crate::auth::AuthError;
 use crate::auth::builder_id::is_idc_user;
+use crate::cli::TodoListState;
 use crate::cli::agent::Agents;
 use crate::cli::chat::cli::SlashCommand;
-use crate::cli::chat::cli::model::{
-    MODEL_OPTIONS,
-    default_model_id,
-};
+use crate::cli::chat::cli::editor::open_editor;
+use crate::cli::chat::cli::model::find_model;
 use crate::cli::chat::cli::prompts::{
     GetPromptError,
     PromptsSubcommand,
 };
+use crate::cli::chat::message::UserMessage;
 use crate::cli::chat::util::sanitize_unicode_tags;
 use crate::database::settings::Setting;
 use crate::mcp_client::Prompt;
@@ -161,7 +170,10 @@ use crate::telemetry::{
     TelemetryResult,
     get_error_reason,
 };
-use crate::util::MCP_SERVER_TOOL_DELIMITER;
+use crate::util::{
+    MCP_SERVER_TOOL_DELIMITER,
+    directories,
+};
 
 const LIMIT_REACHED_TEXT: &str = color_print::cstr! { "You've used all your free requests for this month. You have two options:
 1. Upgrade to a paid subscription for increased limits. See our Pricing page for what's included> <blue!>https://aws.amazon.com/q/developer/pricing/</blue!>
@@ -169,7 +181,7 @@ const LIMIT_REACHED_TEXT: &str = color_print::cstr! { "You've used all your free
 
 pub const EXTRA_HELP: &str = color_print::cstr! {"
 <cyan,em>MCP:</cyan,em>
-<black!>You can now configure the Amazon Q CLI to use MCP servers. \nLearn how: https://docs.aws.amazon.com/en_us/amazonq/latest/qdeveloper-ug/command-line-mcp.html</black!>
+<black!>You can now configure the Amazon Q CLI to use MCP servers. \nLearn how: https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/qdev-mcp.html</black!>
 
 <cyan,em>Tips:</cyan,em>
 <em>!{command}</em>          <black!>Quickly execute a command in your current session</black!>
@@ -178,6 +190,8 @@ pub const EXTRA_HELP: &str = color_print::cstr! {"
 <em>Ctrl(^) + s</em>         <black!>Fuzzy search commands and context files</black!>
                     <black!>Use Tab to select multiple items</black!>
                     <black!>Change the keybind using: q settings chat.skimCommandKey x</black!>
+<em>Ctrl(^) + t</em>         <black!>Toggle tangent mode for isolated conversations</black!>
+                    <black!>Change the keybind using: q settings chat.tangentModeKey x</black!>
 <em>chat.editMode</em>       <black!>The prompt editing mode (vim or emacs)</black!>
                     <black!>Change using: q settings chat.skimCommandKey x</black!>
 "};
@@ -265,9 +279,19 @@ impl ChatArgs {
         let conversation_id = uuid::Uuid::new_v4().to_string();
         info!(?conversation_id, "Generated new conversation id");
 
+        // Check MCP status once at the beginning of the session
+        let mcp_enabled = match os.client.is_mcp_enabled().await {
+            Ok(enabled) => enabled,
+            Err(err) => {
+                tracing::warn!(?err, "Failed to check MCP configuration, defaulting to enabled");
+                true
+            },
+        };
+
         let agents = {
             let skip_migration = self.no_interactive;
-            let (mut agents, md) = Agents::load(os, self.agent.as_deref(), skip_migration, &mut stderr).await;
+            let (mut agents, md) =
+                Agents::load(os, self.agent.as_deref(), skip_migration, &mut stderr, mcp_enabled).await;
             agents.trust_all_tools = self.trust_all_tools;
 
             os.telemetry
@@ -282,9 +306,11 @@ impl ChatArgs {
                 .map_err(|err| error!(?err, "failed to send agent config init telemetry"))
                 .ok();
 
-            if agents
-                .get_active()
-                .is_some_and(|a| !a.mcp_servers.mcp_servers.is_empty())
+            // Only show MCP safety message if MCP is enabled and has servers
+            if mcp_enabled
+                && agents
+                    .get_active()
+                    .is_some_and(|a| !a.mcp_servers.mcp_servers.is_empty())
             {
                 if !self.no_interactive && !os.database.settings.get_bool(Setting::McpLoadedBefore).unwrap_or(false) {
                     execute!(
@@ -329,28 +355,35 @@ impl ChatArgs {
         };
 
         // If modelId is specified, verify it exists before starting the chat
-        let model_id: Option<String> = if let Some(model_name) = self.model {
-            let model_name_lower = model_name.to_lowercase();
-            match MODEL_OPTIONS.iter().find(|opt| opt.name == model_name_lower) {
-                Some(opt) => Some((opt.model_id).to_string()),
-                None => {
-                    let available_names: Vec<&str> = MODEL_OPTIONS.iter().map(|opt| opt.name).collect();
-                    bail!(
-                        "Model '{}' does not exist. Available models: {}",
-                        model_name,
-                        available_names.join(", ")
-                    );
-                },
+        // Otherwise, CLI will use a default model when starting chat
+        let (models, default_model_opt) = get_available_models(os).await?;
+        let model_id: Option<String> = if let Some(requested) = self.model.as_ref() {
+            if let Some(m) = find_model(&models, requested) {
+                Some(m.model_id.clone())
+            } else {
+                let available = models
+                    .iter()
+                    .map(|m| m.model_name.as_deref().unwrap_or(&m.model_id))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                bail!("Model '{}' does not exist. Available models: {}", requested, available);
             }
+        } else if let Some(saved) = os.database.settings.get_string(Setting::ChatDefaultModel) {
+            find_model(&models, &saved)
+                .map(|m| m.model_id.clone())
+                .or(Some(default_model_opt.model_id.clone()))
         } else {
-            None
+            Some(default_model_opt.model_id.clone())
         };
 
-        let (prompt_request_sender, prompt_request_receiver) = std::sync::mpsc::channel::<Option<String>>();
-        let (prompt_response_sender, prompt_response_receiver) = std::sync::mpsc::channel::<Vec<String>>();
+        let (prompt_request_sender, prompt_request_receiver) = tokio::sync::broadcast::channel::<PromptQuery>(5);
+        let (prompt_response_sender, prompt_response_receiver) =
+            tokio::sync::broadcast::channel::<PromptQueryResult>(5);
         let mut tool_manager = ToolManagerBuilder::default()
-            .prompt_list_sender(prompt_response_sender)
-            .prompt_list_receiver(prompt_request_receiver)
+            .prompt_query_result_sender(prompt_response_sender)
+            .prompt_query_receiver(prompt_request_receiver)
+            .prompt_query_sender(prompt_request_sender.clone())
+            .prompt_query_result_receiver(prompt_response_receiver.resubscribe())
             .conversation_id(&conversation_id)
             .agent(agents.get_active().cloned().unwrap_or_default())
             .build(os, Box::new(std::io::stderr()), !self.no_interactive)
@@ -371,6 +404,7 @@ impl ChatArgs {
             model_id,
             tool_config,
             !self.no_interactive,
+            mcp_enabled,
         )
         .await?
         .spawn(os)
@@ -392,7 +426,7 @@ const SMALL_SCREEN_WELCOME_TEXT: &str = color_print::cstr! {"<em>Welcome to <cya
 const RESUME_TEXT: &str = color_print::cstr! {"<em>Picking up where we left off...</em>"};
 
 // Only show the model-related tip for now to make users aware of this feature.
-const ROTATING_TIPS: [&str; 16] = [
+const ROTATING_TIPS: [&str; 18] = [
     color_print::cstr! {"You can resume the last conversation from your current directory by launching with
     <green!>q chat --resume</green!>"},
     color_print::cstr! {"Get notified whenever Q CLI finishes responding.
@@ -424,6 +458,8 @@ const ROTATING_TIPS: [&str; 16] = [
     color_print::cstr! {"Use <green!>/model</green!> to select the model to use for this conversation"},
     color_print::cstr! {"Set a default model by running <green!>q settings chat.defaultModel MODEL</green!>. Run <green!>/model</green!> to learn more."},
     color_print::cstr! {"Run <green!>/prompts</green!> to learn how to build & run repeatable workflows"},
+    color_print::cstr! {"Use <green!>/tangent</green!> or <green!>ctrl + t</green!> (customizable) to start isolated conversations ( ↯ ) that don't affect your main chat history"},
+    color_print::cstr! {"Ask me directly about my capabilities! Try questions like <green!>\"What can you do?\"</green!> or <green!>\"Can you save conversations?\"</green!>"},
 ];
 
 const GREETING_BREAK_POINT: usize = 80;
@@ -482,6 +518,8 @@ pub enum ChatError {
     NonInteractiveToolApproval,
     #[error("The conversation history is too large to compact")]
     CompactHistoryFailure,
+    #[error("Failed to swap to agent: {0}")]
+    AgentSwapError(eyre::Report),
 }
 
 impl ChatError {
@@ -498,6 +536,7 @@ impl ChatError {
             ChatError::GetPromptError(_) => None,
             ChatError::NonInteractiveToolApproval => None,
             ChatError::CompactHistoryFailure => None,
+            ChatError::AgentSwapError(_) => None,
         }
     }
 }
@@ -516,6 +555,7 @@ impl ReasonCode for ChatError {
             ChatError::Auth(_) => "AuthError".to_string(),
             ChatError::NonInteractiveToolApproval => "NonInteractiveToolApproval".to_string(),
             ChatError::CompactHistoryFailure => "CompactHistoryFailure".to_string(),
+            ChatError::AgentSwapError(_) => "AgentSwapError".to_string(),
         }
     }
 }
@@ -593,28 +633,8 @@ impl ChatSession {
         model_id: Option<String>,
         tool_config: HashMap<String, ToolSpec>,
         interactive: bool,
+        mcp_enabled: bool,
     ) -> Result<Self> {
-        let valid_model_id = match model_id {
-            Some(id) => id,
-            None => {
-                let from_settings = os
-                    .database
-                    .settings
-                    .get_string(Setting::ChatDefaultModel)
-                    .and_then(|model_name| {
-                        MODEL_OPTIONS
-                            .iter()
-                            .find(|opt| opt.name == model_name)
-                            .map(|opt| opt.model_id.to_owned())
-                    });
-
-                match from_settings {
-                    Some(id) => id,
-                    None => default_model_id(os).await.to_owned(),
-                }
-            },
-        };
-
         // Reload prior conversation
         let mut existing_conversation = false;
         let previous_conversation = std::env::current_dir()
@@ -645,16 +665,26 @@ impl ChatSession {
                                 ": cannot resume conversation with {profile} because it no longer exists. Using default.\n"
                             ))
                         )?;
-                        let _ = agents.switch("default");
+                        let _ = agents.switch(DEFAULT_AGENT_NAME);
                     }
                 }
                 cs.agents = agents;
+                cs.mcp_enabled = mcp_enabled;
                 cs.update_state(true).await;
                 cs.enforce_tool_use_history_invariants();
                 cs
             },
             false => {
-                ConversationState::new(conversation_id, agents, tool_config, tool_manager, Some(valid_model_id)).await
+                ConversationState::new(
+                    conversation_id,
+                    agents,
+                    tool_config,
+                    tool_manager,
+                    model_id,
+                    os,
+                    mcp_enabled,
+                )
+                .await
             },
         };
 
@@ -1380,14 +1410,21 @@ impl ChatSession {
                 ))
             )?;
         }
+
+        if let Some(agent) = self.conversation.agents.get_active() {
+            agent.print_overridden_permissions(&mut self.stderr)?;
+        }
+
         self.stderr.flush()?;
 
-        if let Some(ref id) = self.conversation.model {
-            if let Some(model_option) = MODEL_OPTIONS.iter().find(|option| option.model_id == *id) {
+        if let Some(ref model_info) = self.conversation.model_info {
+            let (models, _default_model) = get_available_models(os).await?;
+            if let Some(model_option) = models.iter().find(|option| option.model_id == model_info.model_id) {
+                let display_name = model_option.model_name.as_deref().unwrap_or(&model_option.model_id);
                 execute!(
                     self.stderr,
                     style::SetForegroundColor(Color::Cyan),
-                    style::Print(format!("🤖 You are chatting with {}\n", model_option.name)),
+                    style::Print(format!("🤖 You are chatting with {}\n", display_name)),
                     style::SetForegroundColor(Color::Reset),
                     style::Print("\n")
                 )?;
@@ -1699,6 +1736,235 @@ impl ChatSession {
         }
     }
 
+    /// Generates a custom agent configuration (system prompt and tool config) based on user input.
+    /// Uses an LLM to create the agent specifications from the provided name and description.
+    async fn generate_agent_config(
+        &mut self,
+        os: &mut Os,
+        agent_name: &str,
+        agent_description: &str,
+        selected_servers: &str,
+        schema: &str,
+        is_global: bool,
+    ) -> Result<ChatState, ChatError> {
+        // Same pattern as compact_history for handling ctrl+c interruption
+        let request_metadata: Arc<Mutex<Option<RequestMetadata>>> = Arc::new(Mutex::new(None));
+        let request_metadata_clone = Arc::clone(&request_metadata);
+        let mut ctrl_c_stream = self.ctrlc_rx.resubscribe();
+
+        tokio::select! {
+            res = self.generate_agent_config_impl(os, agent_name, agent_description, selected_servers, schema, is_global, request_metadata_clone) => res,
+            Ok(_) = ctrl_c_stream.recv() => {
+                debug!(?request_metadata, "ctrlc received in generate agent config");
+                // Wait for handle_response to finish handling the ctrlc.
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                if let Some(request_metadata) = request_metadata.lock().await.take() {
+                    self.user_turn_request_metadata.push(request_metadata);
+                }
+                self.send_chat_telemetry(
+                    os,
+                    TelemetryResult::Cancelled,
+                    None,
+                    None,
+                    None,
+                    true,
+                )
+                .await;
+                Err(ChatError::Interrupted { tool_uses: Some(self.tool_uses.clone()) })
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn generate_agent_config_impl(
+        &mut self,
+        os: &mut Os,
+        agent_name: &str,
+        agent_description: &str,
+        selected_servers: &str,
+        schema: &str,
+        is_global: bool,
+        request_metadata_lock: Arc<Mutex<Option<RequestMetadata>>>,
+    ) -> Result<ChatState, ChatError> {
+        debug!(?agent_name, ?agent_description, "generating agent config");
+
+        if agent_name.trim().is_empty() || agent_description.trim().is_empty() {
+            execute!(
+                self.stderr,
+                style::SetForegroundColor(Color::Yellow),
+                style::Print("\nAgent name and description cannot be empty.\n\n"),
+                style::SetForegroundColor(Color::Reset)
+            )?;
+
+            return Ok(ChatState::PromptUser {
+                skip_printing_tools: true,
+            });
+        }
+
+        let prepopulated_agent = Agent {
+            name: agent_name.to_string(),
+            description: Some(agent_description.to_string()),
+            ..Default::default()
+        };
+        let prepopulated_content = prepopulated_agent
+            .to_str_pretty()
+            .map_err(|e| ChatError::Custom(format!("Error prepopulating agent fields: {}", e).into()))?;
+
+        // Create the agent generation request - this now works!
+        let generation_state = self
+            .conversation
+            .create_agent_generation_request(
+                agent_name,
+                agent_description,
+                selected_servers,
+                schema,
+                prepopulated_content.as_str(),
+            )
+            .await?;
+
+        if self.interactive {
+            execute!(self.stderr, cursor::Hide, style::Print("\n"))?;
+            self.spinner = Some(Spinner::new(
+                Spinners::Dots,
+                format!("Generating agent config for '{}'...", agent_name),
+            ));
+        }
+
+        let mut response = match self
+            .send_message(
+                os,
+                generation_state,
+                request_metadata_lock,
+                Some(vec![MessageMetaTag::GenerateAgent]),
+            )
+            .await
+        {
+            Ok(res) => res,
+            Err(err) => {
+                if self.interactive {
+                    self.spinner.take();
+                    execute!(
+                        self.stderr,
+                        terminal::Clear(terminal::ClearType::CurrentLine),
+                        cursor::MoveToColumn(0),
+                        style::SetAttribute(Attribute::Reset)
+                    )?;
+                }
+                return Err(err);
+            },
+        };
+
+        let (agent_config_json, _request_metadata) = {
+            loop {
+                match response.recv().await {
+                    Some(Ok(parser::ResponseEvent::EndStream {
+                        message,
+                        request_metadata,
+                    })) => {
+                        self.user_turn_request_metadata.push(request_metadata.clone());
+                        break (message.content().to_string(), request_metadata);
+                    },
+                    Some(Ok(_)) => (),
+                    Some(Err(err)) => {
+                        if let Some(request_id) = &err.request_metadata.request_id {
+                            self.failed_request_ids.push(request_id.clone());
+                        }
+
+                        self.user_turn_request_metadata.push(err.request_metadata.clone());
+
+                        let (reason, reason_desc) = get_error_reason(&err);
+                        self.send_chat_telemetry(
+                            os,
+                            TelemetryResult::Failed,
+                            Some(reason),
+                            Some(reason_desc),
+                            err.status_code(),
+                            true,
+                        )
+                        .await;
+
+                        return Err(err.into());
+                    },
+                    None => {
+                        error!("response stream receiver closed before receiving a stop event");
+                        return Err(ChatError::Custom("Stream failed during agent generation".into()));
+                    },
+                }
+            }
+        };
+
+        if self.spinner.is_some() {
+            drop(self.spinner.take());
+            queue!(
+                self.stderr,
+                terminal::Clear(terminal::ClearType::CurrentLine),
+                cursor::MoveToColumn(0),
+                cursor::Show
+            )?;
+        }
+        // Parse and validate the initial generated config
+        let initial_agent_config = match serde_json::from_str::<Agent>(&agent_config_json) {
+            Ok(config) => config,
+            Err(_) => {
+                execute!(
+                    self.stderr,
+                    style::SetForegroundColor(Color::Red),
+                    style::Print("✗ The LLM did not generate a valid agent configuration. Please try again.\n\n"),
+                    style::SetForegroundColor(Color::Reset)
+                )?;
+                return Ok(ChatState::PromptUser {
+                    skip_printing_tools: true,
+                });
+            },
+        };
+
+        let formatted_json = serde_json::to_string_pretty(&initial_agent_config)
+            .map_err(|e| ChatError::Custom(format!("Failed to format JSON: {}", e).into()))?;
+
+        let edited_content = open_editor(Some(formatted_json))?;
+
+        // Parse and validate the edited config
+        let final_agent_config = match serde_json::from_str::<Agent>(&edited_content) {
+            Ok(config) => config,
+            Err(err) => {
+                execute!(
+                    self.stderr,
+                    style::SetForegroundColor(Color::Red),
+                    style::Print(format!("✗ Invalid edited configuration: {}\n\n", err)),
+                    style::SetForegroundColor(Color::Reset)
+                )?;
+                return Ok(ChatState::PromptUser {
+                    skip_printing_tools: true,
+                });
+            },
+        };
+
+        // Save the final agent config to file
+        if let Err(err) = save_agent_config(os, &final_agent_config, agent_name, is_global).await {
+            execute!(
+                self.stderr,
+                style::SetForegroundColor(Color::Red),
+                style::Print(format!("✗ Failed to save agent config: {}\n\n", err)),
+                style::SetForegroundColor(Color::Reset)
+            )?;
+            return Err(err);
+        }
+
+        execute!(
+            self.stderr,
+            style::SetForegroundColor(Color::Green),
+            style::Print(format!(
+                "✓ Agent '{}' has been created and saved successfully!\n",
+                agent_name
+            )),
+            style::SetForegroundColor(Color::Reset)
+        )?;
+
+        Ok(ChatState::PromptUser {
+            skip_printing_tools: true,
+        })
+    }
+
     /// Read input from the user.
     async fn prompt_user(&mut self, os: &Os, skip_printing_tools: bool) -> Result<ChatState, ChatError> {
         execute!(self.stderr, cursor::Show)?;
@@ -1808,6 +2074,7 @@ impl ChatSession {
                                 .await;
 
                             if matches!(chat_state, ChatState::Exit)
+                                || matches!(chat_state, ChatState::HandleResponseStream(_))
                                 || matches!(chat_state, ChatState::HandleInput { input: _ })
                                 // TODO(bskiser): this is just a hotfix for handling state changes
                                 // from manually running /compact, without impacting behavior of
@@ -1945,6 +2212,12 @@ impl ChatSession {
                             .clone()
                             .unwrap_or(tool_use.name.clone());
                         self.conversation.agents.trust_tools(vec![formatted_tool_name]);
+
+                        if let Some(agent) = self.conversation.agents.get_active() {
+                            agent
+                                .print_overridden_permissions(&mut self.stderr)
+                                .map_err(|_e| ChatError::Custom("Failed to validate agent tool settings".into()))?;
+                        }
                     }
                     tool_use.accepted = true;
 
@@ -1998,6 +2271,26 @@ impl ChatSession {
     }
 
     async fn tool_use_execute(&mut self, os: &mut Os) -> Result<ChatState, ChatError> {
+        // Check if we should auto-enter tangent mode for introspect tool
+        if os
+            .database
+            .settings
+            .get_bool(Setting::EnabledTangentMode)
+            .unwrap_or(false)
+            && os
+                .database
+                .settings
+                .get_bool(Setting::IntrospectTangentMode)
+                .unwrap_or(false)
+            && !self.conversation.is_in_tangent_mode()
+            && self
+                .tool_uses
+                .iter()
+                .any(|tool| matches!(tool.tool, Tool::Introspect(_)))
+        {
+            self.conversation.enter_tangent_mode();
+        }
+
         // Verify tools have permissions.
         for i in 0..self.tool_uses.len() {
             let tool = &mut self.tool_uses[i];
@@ -2007,22 +2300,40 @@ impl ChatSession {
                 continue;
             }
 
-            let mut denied = false;
+            let mut denied_match_set = None::<Vec<String>>;
             let allowed =
                 self.conversation
                     .agents
                     .get_active()
-                    .is_some_and(|a| match tool.tool.requires_acceptance(a) {
+                    .is_some_and(|a| match tool.tool.requires_acceptance(os, a) {
                         PermissionEvalResult::Allow => true,
                         PermissionEvalResult::Ask => false,
-                        PermissionEvalResult::Deny => {
-                            denied = true;
+                        PermissionEvalResult::Deny(matches) => {
+                            denied_match_set.replace(matches);
                             false
                         },
                     })
                     || self.conversation.agents.trust_all_tools;
 
-            if denied {
+            if let Some(match_set) = denied_match_set {
+                let formatted_set = match_set.into_iter().fold(String::new(), |mut acc, rule| {
+                    acc.push_str(&format!("\n  - {rule}"));
+                    acc
+                });
+
+                execute!(
+                    self.stderr,
+                    style::SetForegroundColor(Color::Red),
+                    style::Print("Command "),
+                    style::SetForegroundColor(Color::Yellow),
+                    style::Print(&tool.name),
+                    style::SetForegroundColor(Color::Red),
+                    style::Print(" is rejected because it matches one or more rules on the denied list:"),
+                    style::Print(formatted_set),
+                    style::Print("\n"),
+                    style::SetForegroundColor(Color::Reset),
+                )?;
+
                 return Ok(ChatState::HandleInput {
                     input: format!(
                         "Tool use with {} was rejected because the arguments supplied were forbidden",
@@ -2071,7 +2382,27 @@ impl ChatSession {
                 ev.is_accepted = true;
             });
 
-            let invoke_result = tool.tool.invoke(os, &mut self.stdout).await;
+            // Extract AWS service name and operation name if available
+            if let Some(additional_info) = tool.tool.get_additional_info() {
+                if let Some(aws_service_name) = additional_info.get("aws_service_name").and_then(|v| v.as_str()) {
+                    tool_telemetry =
+                        tool_telemetry.and_modify(|ev| ev.aws_service_name = Some(aws_service_name.to_string()));
+                }
+                if let Some(aws_operation_name) = additional_info.get("aws_operation_name").and_then(|v| v.as_str()) {
+                    tool_telemetry =
+                        tool_telemetry.and_modify(|ev| ev.aws_operation_name = Some(aws_operation_name.to_string()));
+                }
+            }
+
+            let invoke_result = tool
+                .tool
+                .invoke(
+                    os,
+                    &mut self.stdout,
+                    &mut self.conversation.file_line_tracker,
+                    self.conversation.agents.get_active(),
+                )
+                .await;
 
             // store last tool use for current status
             self.last_tool_use = Some((tool.name.clone(), Self::get_tool_summary(&tool.tool)));
@@ -2136,6 +2467,33 @@ impl ChatSession {
                         tool_telemetry
                             .and_modify(|ev| ev.output_token_size = Some(TokenCounter::count_tokens(&result.as_str())));
                     }
+
+                    // Send telemetry for agent contribution
+                    if let Tool::FsWrite(w) = &tool.tool {
+                        let sanitized_path_str = w.path(os).to_string_lossy().to_string();
+                        let conversation_id = self.conversation.conversation_id().to_string();
+                        let message_id = self.conversation.message_id().map(|s| s.to_string());
+                        if let Some(tracker) = self.conversation.file_line_tracker.get_mut(&sanitized_path_str) {
+                            let lines_by_agent = tracker.lines_by_agent();
+                            let lines_by_user = tracker.lines_by_user();
+
+                            os.telemetry
+                                .send_agent_contribution_metric(
+                                    &os.database,
+                                    conversation_id,
+                                    message_id,
+                                    Some(tool.id.clone()),   // Already a String
+                                    Some(tool.name.clone()), // Already a String
+                                    Some(lines_by_agent),
+                                    Some(lines_by_user),
+                                )
+                                .await
+                                .ok();
+
+                            tracker.prev_fswrite_lines = tracker.after_fswrite_lines;
+                        }
+                    }
+
                     tool_results.push(ToolUseResult {
                         tool_use_id: tool.id.clone(),
                         content: vec![result.into()],
@@ -2521,11 +2879,14 @@ impl ChatSession {
         for tool_use in tool_uses {
             let tool_use_id = tool_use.id.clone();
             let tool_use_name = tool_use.name.clone();
-            let mut tool_telemetry =
-                ToolUseEventBuilder::new(conv_id.clone(), tool_use.id.clone(), self.conversation.model.clone())
-                    .set_tool_use_id(tool_use_id.clone())
-                    .set_tool_name(tool_use.name.clone())
-                    .utterance_id(self.conversation.message_id().map(|s| s.to_string()));
+            let mut tool_telemetry = ToolUseEventBuilder::new(
+                conv_id.clone(),
+                tool_use.id.clone(),
+                self.conversation.model_info.as_ref().map(|m| m.model_id.clone()),
+            )
+            .set_tool_use_id(tool_use_id.clone())
+            .set_tool_name(tool_use.name.clone())
+            .utterance_id(self.conversation.message_id().map(|s| s.to_string()));
             match self.conversation.tool_manager.get_tool_from_tool_use(tool_use) {
                 Ok(mut tool) => {
                     // Apply non-Q-generated context to tools
@@ -2617,7 +2978,8 @@ impl ChatSession {
     }
 
     async fn retry_model_overload(&mut self, os: &mut Os) -> Result<ChatState, ChatError> {
-        match select_model(self) {
+        os.client.invalidate_model_cache().await;
+        match select_model(os, self).await {
             Ok(Some(_)) => (),
             Ok(None) => {
                 // User did not select a model, so reset the current request state.
@@ -2744,7 +3106,8 @@ impl ChatSession {
     fn generate_tool_trust_prompt(&mut self) -> String {
         let profile = self.conversation.current_profile().map(|s| s.to_string());
         let all_trusted = self.all_tools_trusted();
-        prompt::generate_prompt(profile.as_deref(), all_trusted)
+        let tangent_mode = self.conversation.is_in_tangent_mode();
+        prompt::generate_prompt(profile.as_deref(), all_trusted, tangent_mode)
     }
 
     async fn send_tool_use_telemetry(&mut self, os: &Os) {
@@ -2755,7 +3118,7 @@ impl ChatSession {
             }
             .map(|v| v.to_string());
 
-            os.telemetry.send_tool_use_suggested(event).ok();
+            os.telemetry.send_tool_use_suggested(&os.database, event).await.ok();
         }
     }
 
@@ -2846,7 +3209,13 @@ impl ChatSession {
             tool_use_id: self.conversation.latest_tool_use_ids(),
             tool_name: self.conversation.latest_tool_use_names(),
             assistant_response_length: md.map(|md| md.response_size as i32),
-            message_meta_tags: md.map(|md| md.message_meta_tags.clone()).unwrap_or_default(),
+            message_meta_tags: {
+                let mut tags = md.map(|md| md.message_meta_tags.clone()).unwrap_or_default();
+                if self.conversation.is_in_tangent_mode() {
+                    tags.push(crate::telemetry::core::MessageMetaTag::TangentMode);
+                }
+                tags
+            },
         };
         os.telemetry
             .send_chat_added_message(&os.database, conversation_id.clone(), result, data)
@@ -2932,6 +3301,43 @@ impl ChatSession {
             tracing::warn!("Failed to send slash command telemetry: {}", e);
         }
     }
+
+    /// Prompts Q to resume a to-do list with the given id by calling the load
+    /// command of the todo_list tool
+    pub async fn resume_todo_request(&mut self, os: &mut Os, id: &str) -> Result<ChatState, ChatError> {
+        // Have to unpack each value separately since Reports can't be converted to
+        // ChatError
+        let todo_list = match TodoListState::load(os, id).await {
+            Ok(todo) => todo,
+            Err(e) => {
+                return Err(ChatError::Custom(format!("Error getting todo list: {e}").into()));
+            },
+        };
+        let contents = match serde_json::to_string(&todo_list) {
+            Ok(s) => s,
+            Err(e) => return Err(ChatError::Custom(format!("Error deserializing todo list: {e}").into())),
+        };
+        let request_content = format!(
+            "[SYSTEM NOTE: This is an automated request, not from the user]\n
+            Read the TODO list contents below and understand the task description, completed tasks, and provided context.\n 
+            Call the `load` command of the todo_list tool with the given ID as an argument to display the TODO list to the user and officially resume execution of the TODO list tasks.\n
+            You do not need to display the tasks to the user yourself. You can begin completing the tasks after calling the `load` command.\n
+            TODO LIST CONTENTS: {}\n
+            ID: {}\n",
+            contents,
+            id
+        );
+
+        let summary_message = UserMessage::new_prompt(request_content.clone(), None);
+
+        ChatSession::reset_user_turn(self);
+
+        Ok(ChatState::HandleInput {
+            input: summary_message
+                .into_user_input_message(self.conversation.model.clone(), &self.conversation.tools)
+                .content,
+        })
+    }
 }
 
 /// Replaces amzn_codewhisperer_client::types::SubscriptionStatus with a more descriptive type.
@@ -2992,7 +3398,7 @@ async fn get_subscription_status_with_spinner(
     .await;
 }
 
-async fn with_spinner<T, E, F, Fut>(output: &mut impl std::io::Write, spinner_text: &str, f: F) -> Result<T, E>
+pub async fn with_spinner<T, E, F, Fut>(output: &mut impl std::io::Write, spinner_text: &str, f: F) -> Result<T, E>
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,
@@ -3111,6 +3517,7 @@ mod tests {
             None,
             tool_config,
             true,
+            false,
         )
         .await
         .unwrap()
@@ -3252,6 +3659,7 @@ mod tests {
             None,
             tool_config,
             true,
+            false,
         )
         .await
         .unwrap()
@@ -3348,6 +3756,7 @@ mod tests {
             None,
             tool_config,
             true,
+            false,
         )
         .await
         .unwrap()
@@ -3422,6 +3831,7 @@ mod tests {
             None,
             tool_config,
             true,
+            false,
         )
         .await
         .unwrap()
@@ -3472,6 +3882,7 @@ mod tests {
             None,
             tool_config,
             true,
+            false,
         )
         .await
         .unwrap()
@@ -3496,4 +3907,29 @@ mod tests {
             assert_eq!(actual, *expected, "expected {} for input {}", expected, input);
         }
     }
+}
+
+// Helper method to save the agent config to file
+async fn save_agent_config(os: &mut Os, config: &Agent, agent_name: &str, is_global: bool) -> Result<(), ChatError> {
+    let config_dir = if is_global {
+        directories::chat_global_agent_path(os)
+            .map_err(|e| ChatError::Custom(format!("Could not find global agent directory: {}", e).into()))?
+    } else {
+        directories::chat_local_agent_dir(os)
+            .map_err(|e| ChatError::Custom(format!("Could not find local agent directory: {}", e).into()))?
+    };
+
+    tokio::fs::create_dir_all(&config_dir)
+        .await
+        .map_err(|e| ChatError::Custom(format!("Failed to create config directory: {}", e).into()))?;
+
+    let config_file = config_dir.join(format!("{}.json", agent_name));
+    let config_json = serde_json::to_string_pretty(config)
+        .map_err(|e| ChatError::Custom(format!("Failed to serialize agent config: {}", e).into()))?;
+
+    tokio::fs::write(&config_file, config_json)
+        .await
+        .map_err(|e| ChatError::Custom(format!("Failed to write agent config file: {}", e).into()))?;
+
+    Ok(())
 }

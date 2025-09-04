@@ -16,8 +16,13 @@ use std::io::{
 use std::process::ExitCode;
 
 use agent::AgentArgs;
+pub use agent::{
+    Agent,
+    DEFAULT_AGENT_NAME,
+};
 use anstream::println;
 pub use chat::ConversationState;
+pub use chat::tools::todo::TodoListState;
 use clap::{
     ArgAction,
     CommandFactory,
@@ -141,7 +146,10 @@ impl RootSubcommand {
 
         // Send executed telemetry.
         if self.valid_for_telemetry() {
-            os.telemetry.send_cli_subcommand_executed(&self).ok();
+            os.telemetry
+                .send_cli_subcommand_executed(&os.database, &self)
+                .await
+                .ok();
         }
 
         match self {
