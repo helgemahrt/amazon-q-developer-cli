@@ -1,6 +1,6 @@
 use std::borrow::Cow;
-use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::RwLock;
 
 use eyre::Result;
 use rustyline::completion::{
@@ -155,20 +155,20 @@ impl PathCompleter {
 
 pub struct PromptCompleter {
     sender: PromptQuerySender,
-    receiver: RefCell<PromptQueryResponseReceiver>,
+    receiver: RwLock<PromptQueryResponseReceiver>,
 }
 
 impl PromptCompleter {
     fn new(sender: PromptQuerySender, receiver: PromptQueryResponseReceiver) -> Self {
         PromptCompleter {
             sender,
-            receiver: RefCell::new(receiver),
+            receiver: RwLock::new(receiver),
         }
     }
 
     fn complete_prompt(&self, word: &str) -> Result<Vec<String>, ReadlineError> {
         let sender = &self.sender;
-        let receiver = self.receiver.borrow_mut();
+        let receiver = self.receiver.read().unwrap();
         let query = PromptQuery::Search(if !word.is_empty() { Some(word.to_string()) } else { None });
 
         sender

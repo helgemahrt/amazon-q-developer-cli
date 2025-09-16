@@ -88,7 +88,7 @@ async fn select_experiment(os: &mut Os, session: &mut ChatSession) -> Result<Opt
 
     // Show disclaimer before selection
     queue!(
-        session.stderr,
+        session.chat_output.stderr(),
         style::SetForegroundColor(Color::Yellow),
         style::Print("⚠ Experimental features may be changed or removed at any time\n\n"),
         style::ResetColor,
@@ -108,16 +108,25 @@ async fn select_experiment(os: &mut Os, session: &mut ChatSession) -> Result<Opt
             sel
         },
         // Ctrl‑C -> Err(Interrupted)
-        Err(dialoguer::Error::IO(ref e)) if e.kind() == std::io::ErrorKind::Interrupted => return Ok(None),
+        Err(dialoguer::Error::IO(ref e)) if e.kind() == std::io::ErrorKind::Interrupted => {
+            // Move to beginning of line and clear everything from warning message down
+            queue!(
+                session.chat_output.stderr(),
+                crossterm::cursor::MoveToColumn(0),
+                crossterm::cursor::MoveUp(experiment_labels.len() as u16 + 3),
+                crossterm::terminal::Clear(crossterm::terminal::ClearType::FromCursorDown),
+            )?;
+            return Ok(None);
+        },
         Err(e) => return Err(ChatError::Custom(format!("Failed to choose experiment: {e}").into())),
     };
 
-    queue!(session.stderr, style::ResetColor)?;
+    queue!(session.chat_output.stderr(), style::ResetColor)?;
 
     if let Some(index) = selection {
         // Clear the dialoguer selection line and disclaimer
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             crossterm::cursor::MoveUp(3), // Move up past selection + 2 disclaimer lines
             crossterm::terminal::Clear(crossterm::terminal::ClearType::FromCursorDown),
         )?;
@@ -144,7 +153,7 @@ async fn select_experiment(os: &mut Os, session: &mut ChatSession) -> Result<Opt
         let tools = session
             .conversation
             .tool_manager
-            .load_tools(os, &mut session.stderr)
+            .load_tools(os, &mut session.chat_output.stderr())
             .await
             .map_err(|e| ChatError::Custom(format!("Failed to update tool spec: {e}").into()))?;
 
@@ -153,7 +162,7 @@ async fn select_experiment(os: &mut Os, session: &mut ChatSession) -> Result<Opt
         let status_text = if new_state { "enabled" } else { "disabled" };
 
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             style::SetForegroundColor(Color::Green),
             style::Print(format!(" {} experiment {}\n\n", experiment.name, status_text)),
@@ -161,9 +170,16 @@ async fn select_experiment(os: &mut Os, session: &mut ChatSession) -> Result<Opt
             style::SetForegroundColor(Color::Reset),
             style::SetBackgroundColor(Color::Reset),
         )?;
+    } else {
+        // ESC was pressed - clear the warning message
+        queue!(
+            session.chat_output.stderr(),
+            crossterm::cursor::MoveUp(3), // Move up past selection + 2 disclaimer lines
+            crossterm::terminal::Clear(crossterm::terminal::ClearType::FromCursorDown),
+        )?;
     }
 
-    execute!(session.stderr, style::ResetColor)?;
+    execute!(session.chat_output.stderr(), style::ResetColor)?;
 
     Ok(Some(ChatState::PromptUser {
         skip_printing_tools: false,

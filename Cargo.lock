@@ -1261,6 +1261,7 @@ dependencies = [
  "insta",
  "jsonschema",
  "libc",
+ "libproc",
  "mimalloc",
  "mockito",
  "nix 0.29.0",

@@ -87,7 +87,7 @@ impl KnowledgeSubcommand {
 
     fn write_feature_disabled_message(session: &mut ChatSession) -> Result<(), std::io::Error> {
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::SetForegroundColor(Color::Red),
             style::Print("\nKnowledge tool is disabled. Enable it with: q settings chat.enableKnowledge true\n"),
             style::SetForegroundColor(Color::Yellow),
@@ -137,7 +137,7 @@ impl KnowledgeSubcommand {
         // Show agent-specific knowledge
         if let Some(agent) = agent_name {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::SetAttribute(crossterm::style::Attribute::Bold),
                 style::SetForegroundColor(Color::Magenta),
                 style::Print(format!("👤 Agent ({}):\n", agent)),
@@ -151,7 +151,7 @@ impl KnowledgeSubcommand {
 
                     if contexts.is_empty() {
                         queue!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             style::SetForegroundColor(Color::DarkGrey),
                             style::Print("    <none>\n\n"),
                             style::SetForegroundColor(Color::Reset)
@@ -162,7 +162,7 @@ impl KnowledgeSubcommand {
                 },
                 Err(_) => {
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::SetForegroundColor(Color::DarkGrey),
                         style::Print("    <none>\n\n"),
                         style::SetForegroundColor(Color::Reset)
@@ -182,7 +182,7 @@ impl KnowledgeSubcommand {
         for ctx in contexts {
             // Main entry line with name and ID
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print(format!("{}📂 ", indent)),
                 style::SetAttribute(style::Attribute::Bold),
                 style::SetForegroundColor(Color::Grey),
@@ -196,7 +196,7 @@ impl KnowledgeSubcommand {
 
             // Description line with original description
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print(format!("{}   ", indent)),
                 style::SetForegroundColor(Color::Grey),
                 style::Print(format!("{}\n", ctx.description)),
@@ -205,7 +205,7 @@ impl KnowledgeSubcommand {
 
             // Stats line with improved colors
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print(format!("{}   ", indent)),
                 style::SetForegroundColor(Color::Green),
                 style::Print(format!("{} items", ctx.item_count)),
@@ -346,12 +346,12 @@ impl KnowledgeSubcommand {
     async fn handle_clear(os: &Os, session: &mut ChatSession) -> OperationResult {
         // Require confirmation
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("⚠️  This action will remove all knowledge base entries.\n"),
             style::Print("Clear the knowledge base? (y/N): ")
         )
         .unwrap();
-        session.stderr.flush().unwrap();
+        session.chat_output.stderr().flush().unwrap();
 
         let mut input = String::new();
         if std::io::stdin().read_line(&mut input).is_err() {
@@ -372,13 +372,13 @@ impl KnowledgeSubcommand {
 
         // First, cancel any pending operations
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("🛑 Cancelling any pending operations...\n")
         )
         .unwrap();
         if let Err(e) = store.cancel_operation(None).await {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print(&format!("⚠️  Warning: Failed to cancel operations: {}\n", e))
             )
             .unwrap();
@@ -386,7 +386,7 @@ impl KnowledgeSubcommand {
 
         // Now perform immediate synchronous clear
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("🗑️  Clearing all knowledge base entries...\n")
         )
         .unwrap();
@@ -541,7 +541,7 @@ impl KnowledgeSubcommand {
         match result {
             OperationResult::Success(msg) => {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetForegroundColor(Color::Green),
                     style::Print(format!("\n{}\n\n", msg)),
                     style::SetForegroundColor(Color::Reset)
@@ -550,7 +550,7 @@ impl KnowledgeSubcommand {
             OperationResult::Info(msg) => {
                 if !msg.trim().is_empty() {
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::Print(format!("\n{}\n\n", msg)),
                         style::SetForegroundColor(Color::Reset)
                     )?;
@@ -559,7 +559,7 @@ impl KnowledgeSubcommand {
             },
             OperationResult::Warning(msg) => {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetForegroundColor(Color::Yellow),
                     style::Print(format!("\n{}\n\n", msg)),
                     style::SetForegroundColor(Color::Reset)
@@ -567,7 +567,7 @@ impl KnowledgeSubcommand {
             },
             OperationResult::Error(msg) => {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetForegroundColor(Color::Red),
                     style::Print(format!("\nError: {}\n\n", msg)),
                     style::SetForegroundColor(Color::Reset)

@@ -28,12 +28,12 @@ impl UsageArgs {
     pub async fn execute(self, os: &Os, session: &mut ChatSession) -> Result<ChatState, ChatError> {
         let state = session
             .conversation
-            .backend_conversation_state(os, true, &mut session.stderr)
+            .backend_conversation_state(os, true, &mut session.chat_output.stderr())
             .await?;
 
         if !state.dropped_context_files.is_empty() {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::SetForegroundColor(Color::DarkYellow),
                 style::Print("\nSome context files are dropped due to size limit, please run "),
                 style::SetForegroundColor(Color::DarkGreen),
@@ -82,7 +82,7 @@ impl UsageArgs {
 
         if is_overflow {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print(format!(
                     "\nCurrent context window ({} of {}k tokens used)\n",
                     total_token_used,
@@ -99,7 +99,7 @@ impl UsageArgs {
             )?;
         } else {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print(format!(
                     "\nCurrent context window ({} of {}k tokens used)\n",
                     total_token_used,
@@ -146,10 +146,10 @@ impl UsageArgs {
             )?;
         }
 
-        execute!(session.stderr, style::Print("\n\n"))?;
+        execute!(session.chat_output.stderr(), style::Print("\n\n"))?;
 
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::SetForegroundColor(Color::DarkCyan),
             style::Print("█ Context files: "),
             style::SetForegroundColor(Color::Reset),
@@ -185,7 +185,7 @@ impl UsageArgs {
         )?;
 
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::SetAttribute(Attribute::Bold),
             style::Print("\n💡 Pro Tips:\n"),
             style::SetAttribute(Attribute::Reset),

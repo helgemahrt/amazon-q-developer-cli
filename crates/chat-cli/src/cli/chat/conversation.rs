@@ -96,7 +96,7 @@ pub struct McpServerInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationState {
     /// Randomly generated on creation.
-    conversation_id: String,
+    pub conversation_id: String,
     /// The next user message to be sent as part of the conversation. Required to be [Some] before
     /// calling [Self::as_sendable_conversation_state].
     next_message: Option<UserMessage>,
@@ -840,6 +840,16 @@ Return only the JSON configuration, no additional text.",
         self.update_state(true).await;
 
         Ok(())
+    }
+
+    pub fn clone_with_new_id(&self, conversation_id: String) -> ConversationState {
+        ConversationState {
+            conversation_id,
+            history: VecDeque::new(),
+            latest_summary: None,
+            transcript: VecDeque::new(),
+            ..self.clone()
+        }
     }
 }
 

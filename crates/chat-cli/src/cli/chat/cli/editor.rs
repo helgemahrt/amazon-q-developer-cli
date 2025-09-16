@@ -31,7 +31,7 @@ impl EditorArgs {
             Ok(content) => content,
             Err(err) => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetForegroundColor(Color::Red),
                     style::Print(format!("\nError opening editor: {}\n\n", err)),
                     style::SetForegroundColor(Color::Reset)
@@ -46,7 +46,7 @@ impl EditorArgs {
         Ok(match content.trim().is_empty() {
             true => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetForegroundColor(Color::Yellow),
                     style::Print("\nEmpty content from editor, not submitting.\n\n"),
                     style::SetForegroundColor(Color::Reset)
@@ -58,7 +58,7 @@ impl EditorArgs {
             },
             false => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetForegroundColor(Color::Green),
                     style::Print("\nContent loaded from editor. Submitting prompt...\n\n"),
                     style::SetForegroundColor(Color::Reset)
@@ -66,7 +66,7 @@ impl EditorArgs {
 
                 // Display the content as if the user typed it
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetAttribute(Attribute::Reset),
                     style::SetForegroundColor(Color::Magenta),
                     style::Print("> "),

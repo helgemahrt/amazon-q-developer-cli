@@ -78,6 +78,7 @@ use crate::cli::chat::tools::fs_write::FsWrite;
 use crate::cli::chat::tools::gh_issue::GhIssue;
 use crate::cli::chat::tools::introspect::Introspect;
 use crate::cli::chat::tools::knowledge::Knowledge;
+use crate::cli::chat::tools::launch_agent::SubAgentWrapper;
 use crate::cli::chat::tools::thinking::Thinking;
 use crate::cli::chat::tools::todo::TodoList;
 use crate::cli::chat::tools::use_aws::UseAws;
@@ -700,7 +701,8 @@ impl ToolManager {
         });
         // We need to cast it to erase the type otherwise the compiler will default to static
         // dispatch, which would result in an error of inconsistent match arm return type.
-        let timeout_fut: Pin<Box<dyn Future<Output = ()>>> = if self.clients.is_empty() || !self.is_first_launch {
+        let timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>> = if self.clients.is_empty() || !self.is_first_launch
+        {
             // If there is no server loaded, we want to resolve immediately
             Box::pin(future::ready(()))
         } else if self.is_interactive {
@@ -719,7 +721,7 @@ impl ToolManager {
                 .map_or(30_000_u64, |s| s as u64);
             Box::pin(tokio::time::sleep(std::time::Duration::from_millis(init_timeout)))
         };
-        let server_loading_fut: Pin<Box<dyn Future<Output = ()>>> = if let Some(notify) = notify {
+        let server_loading_fut: Pin<Box<dyn Future<Output = ()> + Send>> = if let Some(notify) = notify {
             Box::pin(async move { notify.notified().await })
         } else {
             Box::pin(future::ready(()))
@@ -811,6 +813,10 @@ impl ToolManager {
             "thinking" => Tool::Thinking(serde_json::from_value::<Thinking>(value.args).map_err(map_err)?),
             "knowledge" => Tool::Knowledge(serde_json::from_value::<Knowledge>(value.args).map_err(map_err)?),
             "todo_list" => Tool::Todo(serde_json::from_value::<TodoList>(value.args).map_err(map_err)?),
+            "launch_agent" => {
+                let wrapper = serde_json::from_value::<SubAgentWrapper>(value.args).map_err(map_err)?;
+                Tool::SubAgentWrapper(wrapper.subagents)
+            },
             // Note that this name is namespaced with server_name{DELIMITER}tool_name
             name => {
                 // Note: tn_map also has tools that underwent no transformation. In otherwords, if

@@ -311,7 +311,7 @@ impl HooksArgs {
 
         if out.is_empty() {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print(
                     "No hooks are configured.\n\nRefer to the documentation for how to add hooks to your agent: "
                 ),
@@ -321,7 +321,7 @@ impl HooksArgs {
                 style::Print("\n"),
             )?;
         } else {
-            session.stdout.write_all(&out)?;
+            session.chat_output.stdout().write_all(&out)?;
         }
 
         Ok(ChatState::PromptUser {

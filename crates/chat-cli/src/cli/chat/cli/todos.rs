@@ -69,7 +69,7 @@ impl TodoSubcommand {
         // Check if todo lists are enabled
         if !TodoList::is_enabled(os) {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::SetForegroundColor(style::Color::Red),
                 style::Print("Todo lists are disabled. Enable them with: q settings chat.enableTodoList true\n"),
                 style::SetForegroundColor(style::Color::Reset)
@@ -101,15 +101,18 @@ impl TodoSubcommand {
                 }
                 if cleared_one {
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::Print("✔ Cleared finished to-do lists!\n".green())
                     )?;
                 } else {
-                    execute!(session.stderr, style::Print("No finished to-do lists to clear!\n"))?;
+                    execute!(
+                        session.chat_output.stderr(),
+                        style::Print("No finished to-do lists to clear!\n")
+                    )?;
                 }
                 if !errors.is_empty() {
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::Print(format!("* Failed to get {} todo list(s)\n", errors.len()).dark_grey())
                     )?;
                 }
@@ -117,11 +120,14 @@ impl TodoSubcommand {
             Self::Resume => match Self::get_descriptions_and_statuses(os).await {
                 Ok(entries) => {
                     if entries.is_empty() {
-                        execute!(session.stderr, style::Print("No to-do lists to resume!\n"),)?;
+                        execute!(
+                            session.chat_output.stderr(),
+                            style::Print("No to-do lists to resume!\n"),
+                        )?;
                     } else if let Some(index) = fuzzy_select_todos(&entries, "Select a to-do list to resume:") {
                         if index < entries.len() {
                             execute!(
-                                session.stderr,
+                                session.chat_output.stderr(),
                                 style::Print(format!(
                                     "{} {}",
                                     "⟳ Resuming:".magenta(),
@@ -137,24 +143,24 @@ impl TodoSubcommand {
             Self::View => match Self::get_descriptions_and_statuses(os).await {
                 Ok(entries) => {
                     if entries.is_empty() {
-                        execute!(session.stderr, style::Print("No to-do lists to view!\n"))?;
+                        execute!(session.chat_output.stderr(), style::Print("No to-do lists to view!\n"))?;
                     } else if let Some(index) = fuzzy_select_todos(&entries, "Select a to-do list to view:") {
                         if index < entries.len() {
                             let list = TodoListState::load(os, &entries[index].id).await.map_err(|e| {
                                 ChatError::Custom(format!("Could not load current to-do list: {e}").into())
                             })?;
                             execute!(
-                                session.stderr,
+                                session.chat_output.stderr(),
                                 style::Print(format!(
                                     "{} {}\n\n",
                                     "Viewing:".magenta(),
                                     entries[index].description.clone()
                                 ))
                             )?;
-                            if list.display_list(&mut session.stderr).is_err() {
+                            if list.display_list(&mut session.chat_output.stderr()).is_err() {
                                 return Err(ChatError::Custom("Could not display the selected to-do list".into()));
                             }
-                            execute!(session.stderr, style::Print("\n"),)?;
+                            execute!(session.chat_output.stderr(), style::Print("\n"),)?;
                         }
                     }
                 },
@@ -163,21 +169,27 @@ impl TodoSubcommand {
             Self::Delete { all } => match Self::get_descriptions_and_statuses(os).await {
                 Ok(entries) => {
                     if entries.is_empty() {
-                        execute!(session.stderr, style::Print("No to-do lists to delete!\n"))?;
+                        execute!(
+                            session.chat_output.stderr(),
+                            style::Print("No to-do lists to delete!\n")
+                        )?;
                     } else if all {
                         for entry in entries {
                             delete_todo(os, &entry.id)
                                 .await
                                 .map_err(|_e| ChatError::Custom("Could not delete all to-do lists".into()))?;
                         }
-                        execute!(session.stderr, style::Print("✔ Deleted all to-do lists!\n".green()),)?;
+                        execute!(
+                            session.chat_output.stderr(),
+                            style::Print("✔ Deleted all to-do lists!\n".green()),
+                        )?;
                     } else if let Some(index) = fuzzy_select_todos(&entries, "Select a to-do list to delete:") {
                         if index < entries.len() {
                             delete_todo(os, &entries[index].id).await.map_err(|e| {
                                 ChatError::Custom(format!("Could not delete the selected to-do list: {e}").into())
                             })?;
                             execute!(
-                                session.stderr,
+                                session.chat_output.stderr(),
                                 style::Print("✔ Deleted to-do list: ".green()),
                                 style::Print(format!("{}\n", entries[index].description.clone().dark_grey()))
                             )?;

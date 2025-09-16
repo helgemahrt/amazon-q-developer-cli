@@ -114,7 +114,7 @@ impl SlashCommand {
                     style,
                 };
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetForegroundColor(style::Color::Yellow),
                     style::Print("This command has been deprecated. Use"),
                     style::SetForegroundColor(style::Color::Cyan),

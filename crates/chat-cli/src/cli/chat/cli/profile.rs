@@ -130,7 +130,7 @@ impl AgentSubcommand {
         macro_rules! _print_err {
             ($err:expr) => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetForegroundColor(Color::Red),
                     style::Print(format!("\nError: {}\n\n", $err)),
                     style::SetForegroundColor(Color::Reset)
@@ -146,21 +146,25 @@ impl AgentSubcommand {
                 for (i, profile) in profiles.iter().enumerate() {
                     if active_profile.is_some_and(|p| p == *profile) {
                         queue!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             style::SetForegroundColor(Color::Green),
                             style::Print("* "),
                             style::Print(&profile.name),
                             style::SetForegroundColor(Color::Reset),
                         )?;
                     } else {
-                        queue!(session.stderr, style::Print("  "), style::Print(&profile.name),)?;
+                        queue!(
+                            session.chat_output.stderr(),
+                            style::Print("  "),
+                            style::Print(&profile.name),
+                        )?;
                     }
 
                     if i < profiles.len().saturating_sub(1) {
-                        queue!(session.stderr, style::Print("\n"))?;
+                        queue!(session.chat_output.stderr(), style::Print("\n"))?;
                     }
                 }
-                execute!(session.stderr, style::Print("\n"))?;
+                execute!(session.chat_output.stderr(), style::Print("\n"))?;
             },
             Self::Schema => {
                 use schemars::schema_for;
@@ -168,13 +172,19 @@ impl AgentSubcommand {
                 let schema = schema_for!(Agent);
                 let pretty = serde_json::to_string_pretty(&schema)
                     .map_err(|e| ChatError::Custom(format!("Failed to convert agent schema to string: {e}").into()))?;
-                highlight_json(&mut session.stderr, pretty.as_str())
+                highlight_json(&mut session.chat_output.stderr(), pretty.as_str())
                     .map_err(|e| ChatError::Custom(format!("Error printing agent schema: {e}").into()))?;
             },
             Self::Create { name, directory, from } => {
-                let mut agents = Agents::load(os, None, true, &mut session.stderr, session.conversation.mcp_enabled)
-                    .await
-                    .0;
+                let mut agents = Agents::load(
+                    os,
+                    None,
+                    true,
+                    &mut session.chat_output.stderr(),
+                    session.conversation.mcp_enabled,
+                )
+                .await
+                .0;
                 let path_with_file_name = create_agent(os, &mut agents, name.clone(), directory, from)
                     .await
                     .map_err(|e| ChatError::Custom(Cow::Owned(e.to_string())))?;
@@ -191,7 +201,7 @@ impl AgentSubcommand {
                     &path_with_file_name,
                     &mut None,
                     session.conversation.mcp_enabled,
-                    &mut session.stderr,
+                    &mut session.chat_output.stderr(),
                 )
                 .await;
                 match new_agent {
@@ -200,7 +210,7 @@ impl AgentSubcommand {
                     },
                     Err(e) => {
                         execute!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             style::SetForegroundColor(Color::Red),
                             style::Print("Error: "),
                             style::ResetColor,
@@ -216,7 +226,7 @@ impl AgentSubcommand {
                 }
 
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetForegroundColor(Color::Green),
                     style::Print("Agent "),
                     style::SetForegroundColor(Color::Cyan),
@@ -339,7 +349,7 @@ impl AgentSubcommand {
                     "default global agent path".to_string()
                 };
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetForegroundColor(Color::Yellow),
                     style::Print(format!(
                         "To make changes or create agents, please do so via create the corresponding config in {}, where you would also find an example config for your reference.\nTo switch agent, launch another instance of q chat with --agent.\n\n",
@@ -357,7 +367,7 @@ impl AgentSubcommand {
                         .map_err(|e| ChatError::Custom(e.to_string().into()))?;
 
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::SetForegroundColor(Color::Green),
                         style::Print("✓ Default agent set to '"),
                         style::Print(&agent.name),
@@ -367,7 +377,7 @@ impl AgentSubcommand {
                 },
                 None => {
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::SetForegroundColor(Color::Red),
                         style::Print("Error: "),
                         style::ResetColor,
@@ -377,7 +387,10 @@ impl AgentSubcommand {
             },
             Self::Swap { name } => {
                 if let Some(name) = name {
-                    session.conversation.swap_agent(os, &mut session.stderr, &name).await?;
+                    session
+                        .conversation
+                        .swap_agent(os, &mut session.chat_output.stderr(), &name)
+                        .await?;
                 } else {
                     let labels = session
                         .conversation
@@ -414,7 +427,10 @@ impl AgentSubcommand {
                     };
 
                     if let Some(name) = name {
-                        session.conversation.swap_agent(os, &mut session.stderr, &name).await?;
+                        session
+                            .conversation
+                            .swap_agent(os, &mut session.chat_output.stderr(), &name)
+                            .await?;
                     }
                 }
             },

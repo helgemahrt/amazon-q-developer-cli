@@ -26,7 +26,7 @@ impl TangentArgs {
             .unwrap_or(false)
         {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::SetForegroundColor(Color::Red),
                 style::Print("\nTangent mode is disabled. Enable it with: q settings chat.enableTangentMode true\n"),
                 style::SetForegroundColor(Color::Reset)
@@ -56,7 +56,7 @@ impl TangentArgs {
             }
 
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::SetForegroundColor(Color::DarkGrey),
                 style::Print("Restored conversation from checkpoint ("),
                 style::SetForegroundColor(Color::Yellow),
@@ -80,7 +80,7 @@ impl TangentArgs {
             let tangent_key_display = format!("ctrl + {}", tangent_key_char.to_lowercase());
 
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::SetForegroundColor(Color::DarkGrey),
                 style::Print("Created a conversation checkpoint ("),
                 style::SetForegroundColor(Color::Yellow),

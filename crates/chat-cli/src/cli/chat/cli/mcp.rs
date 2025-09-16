@@ -22,14 +22,14 @@ impl McpArgs {
     pub async fn execute(self, session: &mut ChatSession) -> Result<ChatState, ChatError> {
         if !session.conversation.mcp_enabled {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::SetForegroundColor(Color::Yellow),
                 style::Print("\n"),
                 style::Print("⚠️  WARNING: "),
                 style::SetForegroundColor(Color::Reset),
                 style::Print("MCP functionality has been disabled by your administrator.\n\n"),
             )?;
-            session.stderr.flush()?;
+            session.chat_output.stderr().flush()?;
             return Ok(ChatState::PromptUser {
                 skip_printing_tools: true,
             });
@@ -58,7 +58,7 @@ impl McpArgs {
                 .join("\n--- tools refreshed ---\n");
 
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print(server_name),
                 style::Print("\n"),
                 style::Print(format!("{}\n", "▔".repeat(terminal_width))),
@@ -69,7 +69,7 @@ impl McpArgs {
 
         if !still_loading.is_empty() {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print("Still loading:\n"),
                 style::Print(format!("{}\n", "▔".repeat(terminal_width))),
                 style::Print(still_loading),
@@ -77,7 +77,7 @@ impl McpArgs {
             )?;
         }
 
-        session.stderr.flush()?;
+        session.chat_output.stderr().flush()?;
 
         Ok(ChatState::PromptUser {
             skip_printing_tools: true,
