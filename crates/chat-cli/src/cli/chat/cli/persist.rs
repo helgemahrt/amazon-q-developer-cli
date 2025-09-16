@@ -40,7 +40,7 @@ impl PersistSubcommand {
                     Ok(v) => v,
                     Err(err) => {
                         execute!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             StyledText::error_fg(),
                             style::Print(format!("\nFailed to {} {}: {}\n\n", $name, $path, &err)),
                             StyledText::reset_attributes()
@@ -59,7 +59,7 @@ impl PersistSubcommand {
                 let contents = tri!(serde_json::to_string_pretty(&session.conversation), "export to", &path);
                 if os.fs.exists(&path) && !force {
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::error_fg(),
                         style::Print(format!(
                             "\nFile at {} already exists. To overwrite, use -f or --force\n\n",
@@ -74,7 +74,7 @@ impl PersistSubcommand {
                 tri!(os.fs.write(&path, contents).await, "export to", &path);
 
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::success_fg(),
                     style::Print(format!("\n✔ Exported conversation state to {}\n\n", &path)),
                     StyledText::reset_attributes()
@@ -110,7 +110,7 @@ impl PersistSubcommand {
                 session.conversation = new_state;
 
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::success_fg(),
                     style::Print(format!("\n✔ Imported conversation state from {}\n\n", &path)),
                     StyledText::reset_attributes()

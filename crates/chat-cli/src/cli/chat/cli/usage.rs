@@ -88,7 +88,7 @@ impl UsageArgs {
 
         if !usage_data.dropped_context_files.is_empty() {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::warning_fg(),
                 style::Print("\nSome context files are dropped due to size limit, please run "),
                 StyledText::success_fg(),
@@ -124,7 +124,7 @@ impl UsageArgs {
 
         if is_overflow {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print(format!(
                     "\nCurrent context window ({} of {}k tokens used)\n",
                     usage_data.total_tokens,
@@ -138,7 +138,7 @@ impl UsageArgs {
             )?;
         } else {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print(format!(
                     "\nCurrent context window ({} of {}k tokens used)\n",
                     usage_data.total_tokens,
@@ -190,10 +190,10 @@ impl UsageArgs {
             )?;
         }
 
-        execute!(session.stderr, style::Print("\n\n"))?;
+        execute!(session.chat_output.stderr(), style::Print("\n\n"))?;
 
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             StyledText::brand_fg(),
             style::Print("█ Context files: "),
             StyledText::reset(),
@@ -229,7 +229,7 @@ impl UsageArgs {
         )?;
 
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::SetAttribute(Attribute::Bold),
             style::Print("\n💡 Pro Tips:\n"),
             StyledText::reset_attributes(),

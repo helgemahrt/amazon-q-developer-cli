@@ -58,7 +58,7 @@ async fn select_experiment(os: &mut Os, session: &mut ChatSession) -> Result<Opt
 
     // Show disclaimer before selection
     queue!(
-        session.stderr,
+        session.chat_output.stderr(),
         StyledText::warning_fg(),
         style::Print("⚠ Experimental features may be changed or removed at any time\n\n"),
         StyledText::reset(),
@@ -78,7 +78,7 @@ async fn select_experiment(os: &mut Os, session: &mut ChatSession) -> Result<Opt
         Err(dialoguer::Error::IO(ref e)) if e.kind() == std::io::ErrorKind::Interrupted => {
             // Move to beginning of line and clear everything from warning message down
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 crossterm::cursor::MoveToColumn(0),
                 crossterm::cursor::MoveUp(experiment_labels.len() as u16 + 3),
                 crossterm::terminal::Clear(crossterm::terminal::ClearType::FromCursorDown),
@@ -88,12 +88,12 @@ async fn select_experiment(os: &mut Os, session: &mut ChatSession) -> Result<Opt
         Err(e) => return Err(ChatError::Custom(format!("Failed to choose experiment: {e}").into())),
     };
 
-    queue!(session.stderr, StyledText::reset())?;
+    queue!(session.chat_output.stderr(), StyledText::reset())?;
 
     if let Some(index) = selection {
         // Clear the dialoguer selection line and disclaimer
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             crossterm::cursor::MoveUp(3), // Move up past selection + 2 disclaimer lines
             crossterm::terminal::Clear(crossterm::terminal::ClearType::FromCursorDown),
         )?;
@@ -115,7 +115,7 @@ async fn select_experiment(os: &mut Os, session: &mut ChatSession) -> Result<Opt
         let status_text = if new_state { "enabled" } else { "disabled" };
 
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             StyledText::success_fg(),
             style::Print(format!(
@@ -130,13 +130,13 @@ async fn select_experiment(os: &mut Os, session: &mut ChatSession) -> Result<Opt
     } else {
         // ESC was pressed - clear the warning message
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             crossterm::cursor::MoveUp(3), // Move up past selection + 2 disclaimer lines
             crossterm::terminal::Clear(crossterm::terminal::ClearType::FromCursorDown),
         )?;
     }
 
-    execute!(session.stderr, StyledText::reset())?;
+    execute!(session.chat_output.stderr(), StyledText::reset())?;
 
     Ok(Some(ChatState::PromptUser {
         skip_printing_tools: false,

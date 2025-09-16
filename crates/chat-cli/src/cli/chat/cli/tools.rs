@@ -77,7 +77,7 @@ impl ToolsArgs {
             );
 
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             style::SetAttribute(Attribute::Bold),
             style::Print({
@@ -132,7 +132,7 @@ impl ToolsArgs {
             });
 
             let _ = queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::SetAttribute(Attribute::Bold),
                 style::Print(format!("{}:\n", origin)),
                 StyledText::reset_attributes(),
@@ -144,7 +144,7 @@ impl ToolsArgs {
         let loading = session.conversation.tool_manager.pending_clients().await;
         if !loading.is_empty() {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::SetAttribute(Attribute::Bold),
                 style::Print("Servers loading (Some of these might need auth. See "),
                 StyledText::success_fg(),
@@ -156,13 +156,17 @@ impl ToolsArgs {
                 style::Print("▔".repeat(terminal_width)),
             )?;
             for client in loading {
-                queue!(session.stderr, style::Print(format!(" - {client}")), style::Print("\n"))?;
+                queue!(
+                    session.chat_output.stderr(),
+                    style::Print(format!(" - {client}")),
+                    style::Print("\n")
+                )?;
             }
         }
 
         if origin_tools.is_empty() {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print(
                     "\nNo tools are currently enabled.\n\nRefer to the documentation for how to add tools to your agent: "
                 ),
@@ -176,7 +180,7 @@ impl ToolsArgs {
 
         if !session.conversation.mcp_enabled {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::warning_fg(),
                 style::Print("\n"),
                 style::Print("⚠️  WARNING: "),
@@ -252,7 +256,11 @@ impl ToolsSubcommand {
             Self::Schema => {
                 let schema_json = serde_json::to_string_pretty(&session.conversation.tool_manager.schema)
                     .map_err(|e| ChatError::Custom(format!("Error converting tool schema to string: {e}").into()))?;
-                queue!(session.stderr, style::Print(schema_json), style::Print("\n"))?;
+                queue!(
+                    session.chat_output.stderr(),
+                    style::Print(schema_json),
+                    style::Print("\n")
+                )?;
             },
             Self::Trust { tool_names } => {
                 let (valid_tools, invalid_tools): (Vec<String>, Vec<String>) =
@@ -262,7 +270,7 @@ impl ToolsSubcommand {
 
                 if !invalid_tools.is_empty() {
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::error_fg(),
                         style::Print(format!("\nCannot trust '{}', ", invalid_tools.join("', '"))),
                         if invalid_tools.len() > 1 {
@@ -288,7 +296,7 @@ impl ToolsSubcommand {
                         .collect::<Vec<_>>();
 
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::success_fg(),
                         if tools_to_trust.len() > 1 {
                             style::Print(format!("\nTools '{}' are ", tools_to_trust.join("', '")))
@@ -323,7 +331,7 @@ impl ToolsSubcommand {
 
                 if !invalid_tools.is_empty() {
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::error_fg(),
                         style::Print(format!("\nCannot untrust '{}', ", invalid_tools.join("', '"))),
                         if invalid_tools.len() > 1 {
@@ -351,7 +359,7 @@ impl ToolsSubcommand {
                     session.conversation.agents.untrust_tools(&tools_to_untrust);
 
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::success_fg(),
                         if tools_to_untrust.len() > 1 {
                             style::Print(format!("\nTools '{}' are ", tools_to_untrust.join("', '")))
@@ -365,7 +373,7 @@ impl ToolsSubcommand {
             },
             Self::TrustAll => {
                 session.conversation.agents.trust_all_tools = true;
-                queue!(session.stderr, style::Print(trust_all_text()))?;
+                queue!(session.chat_output.stderr(), style::Print(trust_all_text()))?;
             },
             Self::Reset => {
                 session.conversation.agents.trust_all_tools = false;
@@ -398,7 +406,7 @@ impl ToolsSubcommand {
                     }
                 }
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::success_fg(),
                     style::Print("\nReset all tools to the permission levels as defined in agent."),
                     StyledText::reset(),
@@ -406,7 +414,7 @@ impl ToolsSubcommand {
             },
         };
 
-        session.stderr.flush()?;
+        session.chat_output.stderr().flush()?;
 
         Ok(ChatState::PromptUser {
             skip_printing_tools: true,

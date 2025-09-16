@@ -51,7 +51,7 @@ impl TangentArgs {
         // Check if tangent mode is enabled
         if !ExperimentManager::is_enabled(os, ExperimentName::TangentMode) {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::error_fg(),
                 style::Print("\nTangent mode is disabled. Enable it with: q settings chat.enableTangentMode true\n"),
                 StyledText::reset(),
@@ -66,7 +66,7 @@ impl TangentArgs {
                 // Check if checkpoint is enabled
                 if ExperimentManager::is_enabled(os, ExperimentName::Checkpoint) {
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::warning_fg(),
                         style::Print(
                             "⚠️ Checkpoint is disabled while in tangent mode. Please exit tangent mode if you want to use checkpoint.\n"
@@ -80,7 +80,7 @@ impl TangentArgs {
                     Self::send_tangent_telemetry(os, session, duration_seconds).await;
 
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::secondary_fg(),
                         style::Print("Restored conversation from checkpoint ("),
                         StyledText::warning_fg(),
@@ -91,7 +91,7 @@ impl TangentArgs {
                     )?;
                 } else {
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::error_fg(),
                         style::Print("You need to be in tangent mode to use tail.\n"),
                         StyledText::reset(),
@@ -105,7 +105,7 @@ impl TangentArgs {
                     Self::send_tangent_telemetry(os, session, duration_seconds).await;
 
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::secondary_fg(),
                         style::Print("Restored conversation from checkpoint ("),
                         StyledText::warning_fg(),
@@ -118,7 +118,7 @@ impl TangentArgs {
                     // Check if checkpoint is enabled
                     if ExperimentManager::is_enabled(os, ExperimentName::Checkpoint) {
                         execute!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             StyledText::warning_fg(),
                             style::Print(
                                 "⚠️ Checkpoint is disabled while in tangent mode. Please exit tangent mode if you want to use checkpoint.\n"
@@ -141,7 +141,7 @@ impl TangentArgs {
                     let tangent_key_display = format!("ctrl + {}", tangent_key_char.to_lowercase());
 
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::secondary_fg(),
                         style::Print("Created a conversation checkpoint ("),
                         StyledText::warning_fg(),

@@ -11,7 +11,6 @@ mod request;
 mod telemetry;
 mod theme;
 mod util;
-
 use std::process::ExitCode;
 
 use anstream::eprintln;

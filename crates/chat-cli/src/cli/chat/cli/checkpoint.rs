@@ -89,7 +89,7 @@ impl CheckpointSubcommand {
         // Check if checkpoint is enabled
         if !ExperimentManager::is_enabled(os, ExperimentName::Checkpoint) {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::error_fg(),
                 style::Print("\nCheckpoint is disabled. Enable it with: q settings chat.enableCheckpoint true\n"),
                 StyledText::reset(),
@@ -102,7 +102,7 @@ impl CheckpointSubcommand {
         // Check if in tangent mode - captures are disabled during tangent mode
         if session.conversation.is_in_tangent_mode() {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::warning_fg(),
                 style::Print(
                     "⚠️ Checkpoint is disabled while in tangent mode. Please exit tangent mode if you want to use checkpoint.\n\n"
@@ -126,7 +126,7 @@ impl CheckpointSubcommand {
     async fn handle_init(&self, os: &Os, session: &mut ChatSession) -> Result<ChatState, ChatError> {
         if session.conversation.checkpoint_manager.is_some() {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::info_fg(),
                 style::Print(
                     "✓ Checkpoints are already enabled for this session! Use /checkpoint list to see current checkpoints.\n"
@@ -145,7 +145,7 @@ impl CheckpointSubcommand {
             );
 
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::info_fg(),
                 style::SetAttribute(Attribute::Bold),
                 style::Print(format!(
@@ -171,7 +171,7 @@ impl CheckpointSubcommand {
         // Take manager out temporarily to avoid borrow issues
         let Some(manager) = session.conversation.checkpoint_manager.take() else {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::warning_fg(),
                 style::Print("⚠️ Checkpoints not enabled. Use '/checkpoint init' to enable.\n"),
                 StyledText::reset(),
@@ -213,7 +213,7 @@ impl CheckpointSubcommand {
         match manager.restore(&mut session.conversation, &tag, hard) {
             Ok(_) => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::info_fg(),
                     style::SetAttribute(Attribute::Bold),
                     style::Print(format!("✓ Restored to checkpoint {}\n", tag)),
@@ -236,7 +236,7 @@ impl CheckpointSubcommand {
     fn handle_list(session: &mut ChatSession, limit: Option<usize>) -> Result<ChatState, ChatError> {
         let Some(manager) = session.conversation.checkpoint_manager.as_ref() else {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::warning_fg(),
                 style::Print("⚠️ Checkpoints not enabled. Use '/checkpoint init' to enable.\n"),
                 StyledText::reset(),
@@ -246,7 +246,7 @@ impl CheckpointSubcommand {
             });
         };
 
-        print_checkpoints(manager, &mut session.stderr, limit)
+        print_checkpoints(manager, &mut session.chat_output.stderr(), limit)
             .map_err(|e| ChatError::Custom(format!("Could not display all checkpoints: {}", e).into()))?;
 
         Ok(ChatState::PromptUser {
@@ -257,7 +257,7 @@ impl CheckpointSubcommand {
     async fn handle_clean(&self, os: &Os, session: &mut ChatSession) -> Result<ChatState, ChatError> {
         let Some(manager) = session.conversation.checkpoint_manager.take() else {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::warning_fg(),
                 style::Print("⚠️ ️Checkpoints not enabled.\n"),
                 StyledText::reset(),
@@ -269,14 +269,14 @@ impl CheckpointSubcommand {
 
         // Print the path that will be deleted
         execute!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print(format!("Deleting: {}\n", manager.shadow_repo_path.display()))
         )?;
 
         match manager.cleanup(os).await {
             Ok(()) => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetAttribute(Attribute::Bold),
                     style::Print("✓ Deleted shadow repository for this session.\n"),
                     StyledText::reset_attributes(),
@@ -296,7 +296,7 @@ impl CheckpointSubcommand {
     fn handle_expand(session: &mut ChatSession, tag: String) -> Result<ChatState, ChatError> {
         let Some(manager) = session.conversation.checkpoint_manager.as_ref() else {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::warning_fg(),
                 style::Print("⚠️ ️Checkpoints not enabled. Use '/checkpoint init' to enable.\n"),
                 StyledText::reset(),
@@ -306,7 +306,7 @@ impl CheckpointSubcommand {
             });
         };
 
-        expand_checkpoint(manager, &mut session.stderr, &tag)
+        expand_checkpoint(manager, &mut session.chat_output.stderr(), &tag)
             .map_err(|e| ChatError::Custom(format!("Failed to expand checkpoint: {}", e).into()))?;
 
         Ok(ChatState::PromptUser {
@@ -317,7 +317,7 @@ impl CheckpointSubcommand {
     fn handle_diff(session: &mut ChatSession, tag1: String, tag2: Option<String>) -> Result<ChatState, ChatError> {
         let Some(manager) = session.conversation.checkpoint_manager.as_ref() else {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::warning_fg(),
                 style::Print("⚠️ Checkpoints not enabled. Use '/checkpoint init' to enable.\n"),
                 StyledText::reset(),
@@ -332,7 +332,7 @@ impl CheckpointSubcommand {
         // Validate tags exist
         if tag1 != "HEAD" && !manager.tag_index.contains_key(&tag1) {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::warning_fg(),
                 style::Print(format!(
                     "⚠️ Checkpoint '{}' not found! Use /checkpoint list to see available checkpoints\n",
@@ -347,7 +347,7 @@ impl CheckpointSubcommand {
 
         if tag2 != "HEAD" && !manager.tag_index.contains_key(&tag2) {
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::warning_fg(),
                 style::Print(format!(
                     "⚠️ Checkpoint '{}' not found! Use /checkpoint list to see available checkpoints\n",
@@ -367,7 +367,7 @@ impl CheckpointSubcommand {
         };
 
         execute!(
-            session.stderr,
+            session.chat_output.stderr(),
             StyledText::info_fg(),
             style::Print(header),
             StyledText::reset(),
@@ -377,13 +377,13 @@ impl CheckpointSubcommand {
             Ok(diff) => {
                 if diff.trim().is_empty() {
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::secondary_fg(),
                         style::Print("No changes.\n"),
                         StyledText::reset(),
                     )?;
                 } else {
-                    execute!(session.stderr, style::Print(diff))?;
+                    execute!(session.chat_output.stderr(), style::Print(diff))?;
                 }
             },
             Err(e) => {

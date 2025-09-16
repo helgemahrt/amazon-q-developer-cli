@@ -6,6 +6,7 @@ pub mod fs_write;
 pub mod gh_issue;
 pub mod introspect;
 pub mod knowledge;
+pub mod launch_agent;
 pub mod thinking;
 pub mod todo;
 pub mod use_aws;
@@ -34,6 +35,10 @@ use fs_write::FsWrite;
 use gh_issue::GhIssue;
 use introspect::Introspect;
 use knowledge::Knowledge;
+use launch_agent::{
+    SubAgent,
+    SubAgentWrapper,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -51,6 +56,7 @@ use super::consts::{
     USER_AGENT_VERSION_VALUE,
 };
 use super::util::images::RichImageBlocks;
+use crate::cli::ConversationState;
 use crate::cli::agent::{
     Agent,
     PermissionEvalResult,
@@ -63,7 +69,7 @@ use crate::theme::{
 };
 
 pub const DEFAULT_APPROVE: [&str; 0] = [];
-pub const NATIVE_TOOLS: [&str; 9] = [
+pub const NATIVE_TOOLS: [&str; 10] = [
     "fs_read",
     "fs_write",
     #[cfg(windows)]
@@ -76,6 +82,7 @@ pub const NATIVE_TOOLS: [&str; 9] = [
     "thinking",
     "todo_list",
     "delegate",
+    "launch_agent",
 ];
 
 /// Represents an executable tool use.
@@ -93,6 +100,7 @@ pub enum Tool {
     Thinking(Thinking),
     Todo(TodoList),
     Delegate(Delegate),
+    SubAgentWrapper(Vec<SubAgent>),
 }
 
 impl Tool {
@@ -113,6 +121,7 @@ impl Tool {
             Tool::Thinking(_) => "thinking (prerelease)",
             Tool::Todo(_) => "todo_list",
             Tool::Delegate(_) => "delegate",
+            Tool::SubAgentWrapper(_) => "launch_agent",
         }
         .to_owned()
     }
@@ -131,6 +140,13 @@ impl Tool {
             Tool::Todo(_) => PermissionEvalResult::Allow,
             Tool::Knowledge(knowledge) => knowledge.eval_perm(os, agent),
             Tool::Delegate(_) => PermissionEvalResult::Allow, // Allow delegate tool
+            Tool::SubAgentWrapper(_) => {
+                if agent.allowed_tools.contains("launch_agent") {
+                    PermissionEvalResult::Allow
+                } else {
+                    PermissionEvalResult::Ask
+                }
+            },
         }
     }
 
@@ -141,6 +157,8 @@ impl Tool {
         stdout: &mut impl Write,
         line_tracker: &mut HashMap<String, FileLineTracker>,
         agents: &crate::cli::agent::Agents,
+        conversation: ConversationState,
+        terminal_width_provider: fn() -> Option<usize>,
     ) -> Result<InvokeOutput> {
         let active_agent = agents.get_active();
         match self {
@@ -155,6 +173,12 @@ impl Tool {
             Tool::Thinking(think) => think.invoke(stdout).await,
             Tool::Todo(todo) => todo.invoke(os, stdout).await,
             Tool::Delegate(delegate) => delegate.invoke(os, stdout, agents).await,
+            Tool::SubAgentWrapper(sub_agents) => {
+                let wrapper = SubAgentWrapper {
+                    subagents: sub_agents.clone(),
+                };
+                wrapper.invoke(stdout, os, conversation, terminal_width_provider).await
+            },
         }
     }
 
@@ -172,6 +196,12 @@ impl Tool {
             Tool::Thinking(thinking) => thinking.queue_description(output),
             Tool::Todo(_) => Ok(()),
             Tool::Delegate(delegate) => delegate.queue_description(output),
+            Tool::SubAgentWrapper(sub_agents) => {
+                let wrapper = SubAgentWrapper {
+                    subagents: sub_agents.clone(),
+                };
+                wrapper.queue_description(output)
+            },
         }
     }
 
@@ -189,6 +219,13 @@ impl Tool {
             Tool::Thinking(think) => think.validate(os).await,
             Tool::Todo(todo) => todo.validate(os).await,
             Tool::Delegate(_) => Ok(()), // No validation needed for delegate tool
+            Tool::SubAgentWrapper(sub_agents) => {
+                // Validate all agents in the vector
+                for agent in sub_agents.iter() {
+                    agent.validate(os).await?;
+                }
+                Ok(())
+            },
         }
     }
 

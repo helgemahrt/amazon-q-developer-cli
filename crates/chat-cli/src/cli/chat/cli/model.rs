@@ -85,14 +85,14 @@ impl ModelArgs {
 }
 
 pub async fn select_model(os: &Os, session: &mut ChatSession) -> Result<Option<ChatState>, ChatError> {
-    queue!(session.stderr, style::Print("\n"))?;
+    queue!(session.chat_output.stderr(), style::Print("\n"))?;
 
     // Fetch available models from service
     let (models, _default_model) = get_available_models(os).await?;
 
     if models.is_empty() {
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             StyledText::error_fg(),
             style::Print("No models available\n"),
             StyledText::reset(),
@@ -136,7 +136,7 @@ pub async fn select_model(os: &Os, session: &mut ChatSession) -> Result<Option<C
         Err(e) => return Err(ChatError::Custom(format!("Failed to choose model: {e}").into())),
     };
 
-    queue!(session.stderr, StyledText::reset())?;
+    queue!(session.chat_output.stderr(), StyledText::reset())?;
 
     if let Some(index) = selection {
         let selected = models[index].clone();
@@ -144,7 +144,7 @@ pub async fn select_model(os: &Os, session: &mut ChatSession) -> Result<Option<C
         let display_name = selected.display_name();
 
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             style::Print(format!(" Using {}\n\n", display_name)),
             StyledText::reset(),
@@ -153,7 +153,7 @@ pub async fn select_model(os: &Os, session: &mut ChatSession) -> Result<Option<C
         )?;
     }
 
-    execute!(session.stderr, StyledText::reset())?;
+    execute!(session.chat_output.stderr(), StyledText::reset())?;
 
     Ok(Some(ChatState::PromptUser {
         skip_printing_tools: false,

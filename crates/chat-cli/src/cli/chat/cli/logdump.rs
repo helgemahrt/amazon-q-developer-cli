@@ -32,7 +32,7 @@ pub struct LogdumpArgs {
 impl LogdumpArgs {
     pub async fn execute(self, session: &mut ChatSession) -> Result<ChatState, ChatError> {
         execute!(
-            session.stderr,
+            session.chat_output.stderr(),
             StyledText::brand_fg(),
             style::Print("Collecting logs...\n"),
             StyledText::reset(),
@@ -47,7 +47,7 @@ impl LogdumpArgs {
         match self.create_log_dump(&zip_path, logs_directory).await {
             Ok(log_count) => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::success_fg(),
                     style::Print(format!(
                         "✓ Successfully created {} with {} log files\n",
@@ -58,7 +58,7 @@ impl LogdumpArgs {
             },
             Err(e) => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::error_fg(),
                     style::Print(format!("✗ Failed to create log dump: {}\n\n", e)),
                     StyledText::reset(),

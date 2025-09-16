@@ -106,7 +106,7 @@ pub struct McpServerInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationState {
     /// Randomly generated on creation.
-    conversation_id: String,
+    pub conversation_id: String,
     /// The next user message to be sent as part of the conversation. Required to be [Some] before
     /// calling [Self::as_sendable_conversation_state].
     next_message: Option<UserMessage>,
@@ -864,6 +864,27 @@ Return only the JSON configuration, no additional text.",
         self.context_message_length
     }
 
+    /// Calculate the conversation size based on history.
+    /// This is a lightweight, synchronous version that counts characters in the conversation history.
+    pub fn calculate_conversation_size(&self) -> ConversationSize {
+        use crate::cli::chat::token_counter::CharCounter;
+
+        let mut user_chars = 0;
+        let mut assistant_chars = 0;
+
+        // Count chars from history
+        for entry in &self.history {
+            user_chars += *entry.user.char_count();
+            assistant_chars += *entry.assistant.char_count();
+        }
+
+        ConversationSize {
+            context_messages: 0.into(),
+            user_messages: user_chars.into(),
+            assistant_messages: assistant_chars.into(),
+        }
+    }
+
     /// Calculate the total character count in the conversation
     pub async fn calculate_char_count(&mut self, os: &Os) -> Result<CharCount, ChatError> {
         Ok(self
@@ -918,11 +939,16 @@ Return only the JSON configuration, no additional text.",
 
     /// Reloads only built-in tools while preserving MCP tools
     pub async fn reload_builtin_tools(&mut self, os: &mut Os, stderr: &mut impl Write) -> Result<(), ChatError> {
-        let builtin_tools = self
+        let (builtin_tools, messages) = self
             .tool_manager
-            .load_tools(os, stderr)
+            .load_tools(os)
             .await
             .map_err(|e| ChatError::Custom(format!("Failed to reload built-in tools: {e}").into()))?;
+
+        // Display any messages from load_tools
+        for msg in messages {
+            writeln!(stderr, "{}", msg)?;
+        }
 
         // Remove existing built-in tools and add updated ones, preserving MCP tools
         self.tools.retain(|origin, _| *origin != ToolOrigin::Native);
@@ -934,26 +960,32 @@ Return only the JSON configuration, no additional text.",
     /// Swapping agent involves the following:
     /// - Reinstantiate the context manager
     /// - Swap agent on tool manager
-    pub async fn swap_agent(
-        &mut self,
-        os: &mut Os,
-        output: &mut impl Write,
-        agent_name: &str,
-    ) -> Result<(), ChatError> {
+    pub async fn swap_agent(&mut self, os: &mut Os, agent_name: &str) -> Result<Vec<String>, ChatError> {
         let agent = self.agents.switch(agent_name).map_err(ChatError::AgentSwapError)?;
         self.context_manager.replace({
             ContextManager::from_agent(agent, calc_max_context_files_size(self.model_info.as_ref()))
                 .map_err(|e| ChatError::Custom(format!("Context manager has failed to instantiate: {e}").into()))?
         });
 
-        self.tool_manager
-            .swap_agent(os, output, agent)
+        let messages = self
+            .tool_manager
+            .swap_agent(os, agent)
             .await
             .map_err(ChatError::AgentSwapError)?;
 
         self.update_state(true).await;
 
-        Ok(())
+        Ok(messages)
+    }
+
+    pub fn clone_with_new_id(&self, conversation_id: String) -> ConversationState {
+        ConversationState {
+            conversation_id,
+            history: VecDeque::new(),
+            latest_summary: None,
+            transcript: VecDeque::new(),
+            ..self.clone()
+        }
     }
 }
 
@@ -1375,16 +1407,9 @@ mod tests {
         let mut output = vec![];
 
         let mut tool_manager = ToolManager::default();
-        let mut conversation = ConversationState::new(
-            "fake_conv_id",
-            agents,
-            tool_manager.load_tools(&mut os, &mut output).await.unwrap(),
-            tool_manager,
-            None,
-            &os,
-            false,
-        )
-        .await;
+        let (tool_config, _) = tool_manager.load_tools(&mut os).await.unwrap();
+        let mut conversation =
+            ConversationState::new("fake_conv_id", agents, tool_config, tool_manager, None, &os, false).await;
 
         // First, build a large conversation history. We need to ensure that the order is always
         // User -> Assistant -> User -> Assistant ...and so on.
@@ -1501,16 +1526,9 @@ mod tests {
         let mut output = vec![];
 
         let mut tool_manager = ToolManager::default();
-        let mut conversation = ConversationState::new(
-            "fake_conv_id",
-            agents,
-            tool_manager.load_tools(&mut os, &mut output).await.unwrap(),
-            tool_manager,
-            None,
-            &os,
-            false,
-        )
-        .await;
+        let (tool_config, _) = tool_manager.load_tools(&mut os).await.unwrap();
+        let mut conversation =
+            ConversationState::new("fake_conv_id", agents, tool_config, tool_manager, None, &os, false).await;
 
         // First, build a large conversation history. We need to ensure that the order is always
         // User -> Assistant -> User -> Assistant ...and so on.

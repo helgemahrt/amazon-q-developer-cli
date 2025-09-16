@@ -32,7 +32,7 @@ impl EditorArgs {
             Ok(content) => content,
             Err(err) => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::error_fg(),
                     style::Print(format!("\nError opening editor: {}\n\n", err)),
                     StyledText::reset(),
@@ -47,7 +47,7 @@ impl EditorArgs {
         Ok(match content.trim().is_empty() {
             true => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::warning_fg(),
                     style::Print("\nEmpty content from editor, not submitting.\n\n"),
                     StyledText::reset(),
@@ -59,7 +59,7 @@ impl EditorArgs {
             },
             false => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::success_fg(),
                     style::Print("\nContent loaded from editor. Submitting prompt...\n\n"),
                     StyledText::reset(),
@@ -67,7 +67,7 @@ impl EditorArgs {
 
                 // Display the content as if the user typed it
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::reset_attributes(),
                     StyledText::emphasis_fg(),
                     style::Print("> "),

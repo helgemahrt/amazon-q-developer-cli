@@ -137,7 +137,7 @@ impl SlashCommand {
                     style,
                 };
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::warning_fg(),
                     style::Print("This command has been deprecated. Use"),
                     StyledText::brand_fg(),

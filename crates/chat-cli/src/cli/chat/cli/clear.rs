@@ -23,7 +23,7 @@ pub struct ClearArgs;
 impl ClearArgs {
     pub async fn execute(self, session: &mut ChatSession) -> Result<ChatState, ChatError> {
         execute!(
-            session.stderr,
+            session.chat_output.stderr(),
             StyledText::secondary_fg(),
             style::Print(
                 "\nAre you sure? This will erase the conversation history and context from hooks for the current session. "
@@ -59,7 +59,7 @@ impl ClearArgs {
             session.tool_turn_start_time = None;
 
             execute!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::success_fg(),
                 style::Print("\nConversation history cleared.\n\n"),
                 StyledText::reset(),

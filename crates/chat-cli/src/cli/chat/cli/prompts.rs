@@ -334,7 +334,7 @@ fn handle_mcp_invalid_params_error(
 
         // Display validation errors
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             StyledText::warning_fg(),
             style::Print("Error: Invalid arguments for prompt '"),
@@ -349,7 +349,7 @@ fn handle_mcp_invalid_params_error(
             if !error.path.is_empty() {
                 let param_name = error.path.join(".");
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("  - "),
                     StyledText::brand_fg(),
                     style::Print(&param_name),
@@ -361,7 +361,7 @@ fn handle_mcp_invalid_params_error(
                 )?;
             } else {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("  - "),
                     StyledText::reset(),
                     style::Print(&error.message),
@@ -371,7 +371,7 @@ fn handle_mcp_invalid_params_error(
         }
 
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             StyledText::secondary_fg(),
             style::Print("Use '/prompts details "),
@@ -381,11 +381,11 @@ fn handle_mcp_invalid_params_error(
             style::Print("\n"),
         )?;
 
-        execute!(session.stderr)?;
+        execute!(session.chat_output.stderr())?;
     } else {
         // Fallback for unparsable -32602 errors
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             StyledText::warning_fg(),
             style::Print("Error: Invalid arguments for prompt '"),
@@ -398,7 +398,7 @@ fn handle_mcp_invalid_params_error(
             StyledText::reset(),
             style::Print("\n"),
         )?;
-        execute!(session.stderr)?;
+        execute!(session.chat_output.stderr())?;
     }
     Ok(())
 }
@@ -420,7 +420,7 @@ fn handle_mcp_internal_error(name: &str, error_str: &str, session: &mut ChatSess
                         .unwrap_or("Internal error");
 
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::Print("\n"),
                         StyledText::error_fg(),
                         style::Print("Error: "),
@@ -432,14 +432,14 @@ fn handle_mcp_internal_error(name: &str, error_str: &str, session: &mut ChatSess
                     if let Some(data) = error_field.get("data") {
                         if let Ok(data_str) = serde_json::to_string_pretty(data) {
                             queue!(
-                                session.stderr,
+                                session.chat_output.stderr(),
                                 style::Print("Details: "),
                                 style::Print(data_str),
                                 style::Print("\n"),
                             )?;
                         }
                     }
-                    execute!(session.stderr)?;
+                    execute!(session.chat_output.stderr())?;
                     return Ok(());
                 }
             }
@@ -448,7 +448,7 @@ fn handle_mcp_internal_error(name: &str, error_str: &str, session: &mut ChatSess
 
     // Fallback for unparsable internal errors
     queue!(
-        session.stderr,
+        session.chat_output.stderr(),
         style::Print("\n"),
         StyledText::error_fg(),
         style::Print("Error: MCP server internal error while processing prompt '"),
@@ -459,7 +459,7 @@ fn handle_mcp_internal_error(name: &str, error_str: &str, session: &mut ChatSess
         StyledText::reset(),
         style::Print("\n"),
     )?;
-    execute!(session.stderr)?;
+    execute!(session.chat_output.stderr())?;
     Ok(())
 }
 
@@ -473,7 +473,7 @@ fn display_missing_args_error(
     session: &mut ChatSession,
 ) -> Result<(), ChatError> {
     queue!(
-        session.stderr,
+        session.chat_output.stderr(),
         style::Print("\n"),
         StyledText::warning_fg(),
         style::Print("Error: Missing required arguments for prompt "),
@@ -498,7 +498,7 @@ fn display_missing_args_error(
 
                 // Usage line
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("Usage: "),
                     StyledText::brand_fg(),
                     style::Print("@"),
@@ -507,7 +507,7 @@ fn display_missing_args_error(
 
                 for arg in &required_args {
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::Print(" <"),
                         style::Print(&arg.name),
                         style::Print(">"),
@@ -515,22 +515,22 @@ fn display_missing_args_error(
                 }
                 for arg in &optional_args {
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::Print(" ["),
                         style::Print(&arg.name),
                         style::Print("]"),
                     )?;
                 }
 
-                queue!(session.stderr, StyledText::reset(), style::Print("\n"),)?;
+                queue!(session.chat_output.stderr(), StyledText::reset(), style::Print("\n"),)?;
 
                 if !args.is_empty() {
-                    queue!(session.stderr, style::Print("\nArguments:\n"),)?;
+                    queue!(session.chat_output.stderr(), style::Print("\nArguments:\n"),)?;
 
                     // Show required arguments first
                     for arg in required_args {
                         queue!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             style::Print("  "),
                             StyledText::error_fg(),
                             style::Print("(required) "),
@@ -540,16 +540,16 @@ fn display_missing_args_error(
                         )?;
                         if let Some(desc) = &arg.description {
                             if !desc.trim().is_empty() {
-                                queue!(session.stderr, style::Print(" - "), style::Print(desc),)?;
+                                queue!(session.chat_output.stderr(), style::Print(" - "), style::Print(desc),)?;
                             }
                         }
-                        queue!(session.stderr, style::Print("\n"))?;
+                        queue!(session.chat_output.stderr(), style::Print("\n"))?;
                     }
 
                     // Then show optional arguments
                     for arg in optional_args {
                         queue!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             style::Print("  "),
                             StyledText::secondary_fg(),
                             style::Print("(optional) "),
@@ -559,17 +559,17 @@ fn display_missing_args_error(
                         )?;
                         if let Some(desc) = &arg.description {
                             if !desc.trim().is_empty() {
-                                queue!(session.stderr, style::Print(" - "), style::Print(desc),)?;
+                                queue!(session.chat_output.stderr(), style::Print(" - "), style::Print(desc),)?;
                             }
                         }
-                        queue!(session.stderr, style::Print("\n"))?;
+                        queue!(session.chat_output.stderr(), style::Print("\n"))?;
                     }
                 }
             }
         }
     }
 
-    execute!(session.stderr)?;
+    execute!(session.chat_output.stderr())?;
     Ok(())
 }
 
@@ -654,7 +654,7 @@ impl PromptsArgs {
 
         // Add usage guidance at the top
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             style::SetAttribute(Attribute::Bold),
             style::Print("Usage: "),
@@ -670,7 +670,7 @@ impl PromptsArgs {
 
         // Print header with three columns
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             style::SetAttribute(Attribute::Bold),
             style::Print("Prompt"),
@@ -729,24 +729,24 @@ impl PromptsArgs {
 
             if !global_prompts.is_empty() {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetAttribute(Attribute::Bold),
                     style::Print("Global (.aws/amazonq/prompts):"),
                     StyledText::reset_attributes(),
                     style::Print("\n"),
                 )?;
                 for name in &global_prompts {
-                    queue!(session.stderr, style::Print("- "), style::Print(name))?;
-                    queue!(session.stderr, style::Print("\n"))?;
+                    queue!(session.chat_output.stderr(), style::Print("- "), style::Print(name))?;
+                    queue!(session.chat_output.stderr(), style::Print("\n"))?;
                 }
             }
 
             if !local_prompts.is_empty() {
                 if !global_prompts.is_empty() {
-                    queue!(session.stderr, style::Print("\n"))?;
+                    queue!(session.chat_output.stderr(), style::Print("\n"))?;
                 }
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::SetAttribute(Attribute::Bold),
                     style::Print("Local (.amazonq/prompts):"),
                     StyledText::reset_attributes(),
@@ -754,17 +754,17 @@ impl PromptsArgs {
                 )?;
                 for name in &local_prompts {
                     let has_global_version = overridden_globals.contains(name);
-                    queue!(session.stderr, style::Print("- "), style::Print(name),)?;
+                    queue!(session.chat_output.stderr(), style::Print("- "), style::Print(name),)?;
                     if has_global_version {
                         queue!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             StyledText::success_fg(),
                             style::Print(" (overrides global)"),
                             StyledText::reset(),
                         )?;
                     }
 
-                    queue!(session.stderr, style::Print("\n"))?;
+                    queue!(session.chat_output.stderr(), style::Print("\n"))?;
                 }
             }
         }
@@ -773,10 +773,10 @@ impl PromptsArgs {
             bundles.sort_by_key(|bundle| &bundle.prompt_get.name);
 
             if i > 0 || !filtered_names.is_empty() {
-                queue!(session.stderr, style::Print("\n"))?;
+                queue!(session.chat_output.stderr(), style::Print("\n"))?;
             }
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::SetAttribute(Attribute::Bold),
                 style::Print(server_name),
                 style::Print(" (MCP):"),
@@ -790,13 +790,17 @@ impl PromptsArgs {
                 let truncated_desc = truncate_description(&description, 40);
 
                 // Print prompt name
-                queue!(session.stderr, style::Print("- "), style::Print(prompt_name),)?;
+                queue!(
+                    session.chat_output.stderr(),
+                    style::Print("- "),
+                    style::Print(prompt_name),
+                )?;
 
                 // Print description with proper alignment
                 let name_width = UnicodeWidthStr::width(prompt_name.as_str()) + 2; // +2 for "- "
                 let description_padding = description_pos.saturating_sub(name_width);
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print(" ".repeat(description_padding)),
                     StyledText::secondary_fg(),
                     style::Print(&truncated_desc),
@@ -808,11 +812,14 @@ impl PromptsArgs {
                     if !args.is_empty() {
                         let current_pos = description_pos + UnicodeWidthStr::width(truncated_desc.as_str());
                         let arguments_padding = arguments_pos.saturating_sub(current_pos);
-                        queue!(session.stderr, style::Print(" ".repeat(arguments_padding)))?;
+                        queue!(
+                            session.chat_output.stderr(),
+                            style::Print(" ".repeat(arguments_padding))
+                        )?;
 
                         for (i, arg) in args.iter().enumerate() {
                             queue!(
-                                session.stderr,
+                                session.chat_output.stderr(),
                                 StyledText::secondary_fg(),
                                 style::Print(match arg.required {
                                     Some(true) => format!("{}*", arg.name),
@@ -824,7 +831,7 @@ impl PromptsArgs {
                         }
                     }
                 }
-                queue!(session.stderr, style::Print("\n"))?;
+                queue!(session.chat_output.stderr(), style::Print("\n"))?;
             }
         }
 
@@ -924,7 +931,7 @@ impl PromptsSubcommand {
             if mcp_prompts.contains_key(&name) {
                 // Show conflict warning
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("\n"),
                     StyledText::warning_fg(),
                     style::Print("⚠ Warning: Both file-based and MCP prompts named '"),
@@ -939,12 +946,12 @@ impl PromptsSubcommand {
                     StyledText::reset(),
                     style::Print("\n"),
                 )?;
-                execute!(session.stderr)?;
+                execute!(session.chat_output.stderr())?;
             }
 
             // Display file-based prompt details
             Self::display_file_prompt_details(&name, &content, &source, session)?;
-            execute!(session.stderr, style::Print("\n"))?;
+            execute!(session.chat_output.stderr(), style::Print("\n"))?;
             return Ok(ChatState::PromptUser {
                 skip_printing_tools: true,
             });
@@ -975,7 +982,7 @@ impl PromptsSubcommand {
         match matching_bundles.len() {
             0 => {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("\n"),
                     StyledText::warning_fg(),
                     style::Print("Prompt "),
@@ -1002,7 +1009,7 @@ impl PromptsSubcommand {
                 let alt_msg = format!("\n{}\n", alt_names.join("\n"));
 
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("\n"),
                     StyledText::warning_fg(),
                     style::Print("Prompt "),
@@ -1017,7 +1024,7 @@ impl PromptsSubcommand {
             },
         }
 
-        execute!(session.stderr, style::Print("\n"))?;
+        execute!(session.chat_output.stderr(), style::Print("\n"))?;
         Ok(ChatState::PromptUser {
             skip_printing_tools: true,
         })
@@ -1029,7 +1036,7 @@ impl PromptsSubcommand {
 
         // Display header
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             style::SetAttribute(Attribute::Bold),
             style::Print("Prompt Details"),
@@ -1041,7 +1048,7 @@ impl PromptsSubcommand {
 
         // Display basic information
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::SetAttribute(Attribute::Bold),
             style::Print("Name: "),
             StyledText::reset_attributes(),
@@ -1056,7 +1063,7 @@ impl PromptsSubcommand {
 
         // Display description
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::SetAttribute(Attribute::Bold),
             style::Print("Description:"),
             StyledText::reset_attributes(),
@@ -1067,7 +1074,7 @@ impl PromptsSubcommand {
             Some(desc) if !desc.trim().is_empty() => {
                 for line in desc.lines() {
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::Print("  "),
                         style::Print(line),
                         style::Print("\n")
@@ -1076,7 +1083,7 @@ impl PromptsSubcommand {
             },
             _ => {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::secondary_fg(),
                     style::Print("  (no description available)"),
                     StyledText::reset(),
@@ -1087,7 +1094,7 @@ impl PromptsSubcommand {
 
         // Display usage example
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             style::SetAttribute(Attribute::Bold),
             style::Print("Usage: "),
@@ -1102,7 +1109,7 @@ impl PromptsSubcommand {
                 match arg.required {
                     Some(true) => {
                         queue!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             style::Print(" <"),
                             style::Print(&arg.name),
                             style::Print(">"),
@@ -1110,7 +1117,7 @@ impl PromptsSubcommand {
                     },
                     _ => {
                         queue!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             style::Print(" ["),
                             style::Print(&arg.name),
                             style::Print("]"),
@@ -1120,11 +1127,11 @@ impl PromptsSubcommand {
             }
         }
 
-        queue!(session.stderr, StyledText::reset(), style::Print("\n"),)?;
+        queue!(session.chat_output.stderr(), StyledText::reset(), style::Print("\n"),)?;
 
         // Display arguments
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             style::SetAttribute(Attribute::Bold),
             style::Print("Arguments:"),
@@ -1135,7 +1142,7 @@ impl PromptsSubcommand {
         if let Some(args) = &prompt.arguments {
             if args.is_empty() {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::secondary_fg(),
                     style::Print("  (no arguments)"),
                     StyledText::reset(),
@@ -1148,7 +1155,7 @@ impl PromptsSubcommand {
                 // Show required arguments first
                 for arg in required_args {
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::Print("  "),
                         StyledText::error_fg(),
                         style::Print("(required) "),
@@ -1160,17 +1167,17 @@ impl PromptsSubcommand {
                     // Show argument description if available
                     if let Some(desc) = &arg.description {
                         if !desc.trim().is_empty() {
-                            queue!(session.stderr, style::Print(" - "), style::Print(desc),)?;
+                            queue!(session.chat_output.stderr(), style::Print(" - "), style::Print(desc),)?;
                         }
                     }
 
-                    queue!(session.stderr, style::Print("\n"))?;
+                    queue!(session.chat_output.stderr(), style::Print("\n"))?;
                 }
 
                 // Then show optional arguments
                 for arg in optional_args {
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::Print("  "),
                         StyledText::secondary_fg(),
                         style::Print("(optional) "),
@@ -1182,16 +1189,16 @@ impl PromptsSubcommand {
                     // Show argument description if available
                     if let Some(desc) = &arg.description {
                         if !desc.trim().is_empty() {
-                            queue!(session.stderr, style::Print(" - "), style::Print(desc),)?;
+                            queue!(session.chat_output.stderr(), style::Print(" - "), style::Print(desc),)?;
                         }
                     }
 
-                    queue!(session.stderr, style::Print("\n"))?;
+                    queue!(session.chat_output.stderr(), style::Print("\n"))?;
                 }
             }
         } else {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::secondary_fg(),
                 style::Print("  (no arguments)"),
                 StyledText::reset(),
@@ -1212,7 +1219,7 @@ impl PromptsSubcommand {
 
         // Display header
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             style::SetAttribute(Attribute::Bold),
             style::Print("Prompt Details"),
@@ -1224,7 +1231,7 @@ impl PromptsSubcommand {
 
         // Display basic information
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::SetAttribute(Attribute::Bold),
             style::Print("Name: "),
             StyledText::reset_attributes(),
@@ -1241,7 +1248,7 @@ impl PromptsSubcommand {
 
         // Display usage example
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::SetAttribute(Attribute::Bold),
             style::Print("Usage: "),
             StyledText::reset_attributes(),
@@ -1254,7 +1261,7 @@ impl PromptsSubcommand {
 
         // Display content preview (first few lines)
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::SetAttribute(Attribute::Bold),
             style::Print("Content Preview:"),
             StyledText::reset_attributes(),
@@ -1265,7 +1272,7 @@ impl PromptsSubcommand {
         let preview_lines = lines.iter().take(5);
         for line in preview_lines {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::secondary_fg(),
                 style::Print("  "),
                 style::Print(line),
@@ -1276,7 +1283,7 @@ impl PromptsSubcommand {
 
         if lines.len() > 5 {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::secondary_fg(),
                 style::Print("  ... ("),
                 style::Print((lines.len() - 5).to_string()),
@@ -1307,7 +1314,7 @@ impl PromptsSubcommand {
             if mcp_prompts.contains_key(&name) {
                 // Show conflict warning
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("\n"),
                     StyledText::warning_fg(),
                     style::Print("⚠ Warning: Both file-based and MCP prompts named '"),
@@ -1322,7 +1329,7 @@ impl PromptsSubcommand {
                     StyledText::reset(),
                     style::Print("\n"),
                 )?;
-                execute!(session.stderr)?;
+                execute!(session.chat_output.stderr())?;
             }
 
             // Display the file-based prompt content to the user
@@ -1359,7 +1366,7 @@ impl PromptsSubcommand {
                 match e {
                     GetPromptError::AmbiguousPrompt(prompt_name, alt_msg) => {
                         queue!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             style::Print("\n"),
                             StyledText::warning_fg(),
                             style::Print("Prompt "),
@@ -1374,7 +1381,7 @@ impl PromptsSubcommand {
                     },
                     GetPromptError::PromptNotFound(prompt_name) => {
                         queue!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             style::Print("\n"),
                             StyledText::warning_fg(),
                             style::Print("Prompt "),
@@ -1408,7 +1415,7 @@ impl PromptsSubcommand {
                         } else {
                             // Other MCP errors - show generic message
                             queue!(
-                                session.stderr,
+                                session.chat_output.stderr(),
                                 style::Print("\n"),
                                 StyledText::warning_fg(),
                                 style::Print("Error: Failed to execute prompt "),
@@ -1420,12 +1427,12 @@ impl PromptsSubcommand {
                                 StyledText::reset(),
                                 style::Print("\n"),
                             )?;
-                            execute!(session.stderr)?;
+                            execute!(session.chat_output.stderr())?;
                         }
                     },
                     _ => return Err(ChatError::Custom(e.to_string().into())),
                 }
-                execute!(session.stderr, style::Print("\n"))?;
+                execute!(session.chat_output.stderr(), style::Print("\n"))?;
                 return Ok(ChatState::PromptUser {
                     skip_printing_tools: true,
                 });
@@ -1452,7 +1459,7 @@ impl PromptsSubcommand {
 
         if let Err(validation_error) = validate_prompt_name(&name) {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print("\n"),
                 StyledText::error_fg(),
                 style::Print("❌ Invalid prompt name: "),
@@ -1474,7 +1481,7 @@ impl PromptsSubcommand {
         if target_exists {
             let location = if global { "global" } else { "local" };
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print("\n"),
                 StyledText::warning_fg(),
                 style::Print("Prompt "),
@@ -1520,7 +1527,7 @@ impl PromptsSubcommand {
             };
 
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print("\n"),
                 StyledText::warning_fg(),
                 style::Print("⚠ Warning: A "),
@@ -1536,14 +1543,14 @@ impl PromptsSubcommand {
             )?;
 
             // Flush stderr to ensure the warning is displayed before asking for input
-            execute!(session.stderr)?;
+            execute!(session.chat_output.stderr())?;
 
             // Ask for user confirmation
             let user_input = match crate::util::input("Do you want to continue? (y/n): ", None) {
                 Ok(input) => input.trim().to_lowercase(),
                 Err(_) => {
                     queue!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         style::Print("\n"),
                         StyledText::success_fg(),
                         style::Print("✓ Prompt creation cancelled.\n"),
@@ -1557,7 +1564,7 @@ impl PromptsSubcommand {
 
             if user_input != "y" && user_input != "yes" {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("\n"),
                     StyledText::success_fg(),
                     style::Print("✓ Prompt creation cancelled.\n"),
@@ -1584,7 +1591,7 @@ impl PromptsSubcommand {
 
                 let location = if global { "global" } else { "local" };
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("\n"),
                     StyledText::success_fg(),
                     style::Print("✓ Created "),
@@ -1614,7 +1621,7 @@ impl PromptsSubcommand {
                     .map_err(|e| ChatError::Custom(e.to_string().into()))?;
 
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("\n"),
                     StyledText::success_fg(),
                     style::Print("Opening editor to create prompt content...\n"),
@@ -1626,7 +1633,7 @@ impl PromptsSubcommand {
                     Ok(()) => {
                         let location = if global { "global" } else { "local" };
                         queue!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             StyledText::success_fg(),
                             style::Print("✓ Created "),
                             style::Print(location),
@@ -1643,7 +1650,7 @@ impl PromptsSubcommand {
                     },
                     Err(err) => {
                         queue!(
-                            session.stderr,
+                            session.chat_output.stderr(),
                             StyledText::error_fg(),
                             style::Print("Error opening editor: "),
                             style::Print(err.to_string()),
@@ -1674,7 +1681,7 @@ impl PromptsSubcommand {
         // Validate prompt name
         if let Err(validation_error) = validate_prompt_name(&name) {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print("\n"),
                 StyledText::error_fg(),
                 style::Print("❌ Invalid prompt name: "),
@@ -1694,7 +1701,7 @@ impl PromptsSubcommand {
         let target_prompt = if global {
             if !global_exists {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("\n"),
                     StyledText::warning_fg(),
                     style::Print("Global prompt "),
@@ -1714,7 +1721,7 @@ impl PromptsSubcommand {
         } else if global_exists {
             // Found global prompt, but user wants to edit local
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print("\n"),
                 StyledText::warning_fg(),
                 style::Print("Local prompt "),
@@ -1742,7 +1749,7 @@ impl PromptsSubcommand {
             });
         } else {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print("\n"),
                 StyledText::warning_fg(),
                 style::Print("Prompt "),
@@ -1759,7 +1766,7 @@ impl PromptsSubcommand {
 
         let location = if global { "global" } else { "local" };
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             StyledText::success_fg(),
             style::Print("Opening editor for "),
@@ -1780,7 +1787,7 @@ impl PromptsSubcommand {
         match open_editor_file(&target_prompt.path) {
             Ok(()) => {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::success_fg(),
                     style::Print("✓ Prompt edited successfully.\n\n"),
                     StyledText::reset(),
@@ -1788,7 +1795,7 @@ impl PromptsSubcommand {
             },
             Err(err) => {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::error_fg(),
                     style::Print("Error opening editor: "),
                     style::Print(err.to_string()),
@@ -1821,7 +1828,7 @@ impl PromptsSubcommand {
         let target_prompt = if global {
             if !global_exists {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("\n"),
                     StyledText::warning_fg(),
                     style::Print("Global prompt "),
@@ -1840,7 +1847,7 @@ impl PromptsSubcommand {
             &prompts.local
         } else if global_exists {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print("\n"),
                 StyledText::warning_fg(),
                 style::Print("Local prompt "),
@@ -1862,7 +1869,7 @@ impl PromptsSubcommand {
             });
         } else {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print("\n"),
                 StyledText::warning_fg(),
                 style::Print("Prompt "),
@@ -1881,7 +1888,7 @@ impl PromptsSubcommand {
 
         // Ask for confirmation
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             style::Print("\n"),
             StyledText::warning_fg(),
             style::Print("⚠ Warning: This will permanently remove the "),
@@ -1899,14 +1906,14 @@ impl PromptsSubcommand {
         )?;
 
         // Flush stderr to ensure the warning is displayed before asking for input
-        execute!(session.stderr)?;
+        execute!(session.chat_output.stderr())?;
 
         // Ask for user confirmation
         let user_input = match crate::util::input("Are you sure you want to remove this prompt? (y/n): ", None) {
             Ok(input) => input.trim().to_lowercase(),
             Err(_) => {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("\n"),
                     StyledText::success_fg(),
                     style::Print("✓ Removal cancelled.\n"),
@@ -1920,7 +1927,7 @@ impl PromptsSubcommand {
 
         if user_input != "y" && user_input != "yes" {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 style::Print("\n"),
                 StyledText::success_fg(),
                 style::Print("✓ Removal cancelled.\n"),
@@ -1935,7 +1942,7 @@ impl PromptsSubcommand {
         match target_prompt.delete() {
             Ok(()) => {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("\n"),
                     StyledText::success_fg(),
                     style::Print("✓ Removed "),
@@ -1950,7 +1957,7 @@ impl PromptsSubcommand {
             },
             Err(err) => {
                 queue!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     style::Print("\n"),
                     StyledText::error_fg(),
                     style::Print("Error deleting prompt: "),
@@ -2006,13 +2013,13 @@ fn display_prompt_content(
         }
     }
 
-    queue!(session.stderr, style::Print("\n"),)?;
+    queue!(session.chat_output.stderr(), style::Print("\n"),)?;
 
     for message in messages {
         let content = stringify_prompt_message_content(&message.content);
         if !content.trim().is_empty() {
             queue!(
-                session.stderr,
+                session.chat_output.stderr(),
                 StyledText::secondary_fg(),
                 style::Print(content),
                 StyledText::reset(),
@@ -2021,18 +2028,18 @@ fn display_prompt_content(
         }
     }
 
-    queue!(session.stderr, style::Print("\n"))?;
-    execute!(session.stderr)?;
+    queue!(session.chat_output.stderr(), style::Print("\n"))?;
+    execute!(session.chat_output.stderr())?;
     Ok(())
 }
 
 /// Display file-based prompt content to the user before AI processing
 fn display_file_prompt_content(_prompt_name: &str, content: &str, session: &mut ChatSession) -> Result<(), ChatError> {
-    queue!(session.stderr, style::Print("\n"),)?;
+    queue!(session.chat_output.stderr(), style::Print("\n"),)?;
 
     if !content.trim().is_empty() {
         queue!(
-            session.stderr,
+            session.chat_output.stderr(),
             StyledText::secondary_fg(),
             style::Print(content),
             StyledText::reset(),
@@ -2040,8 +2047,8 @@ fn display_file_prompt_content(_prompt_name: &str, content: &str, session: &mut 
         )?;
     }
 
-    queue!(session.stderr, style::Print("\n"))?;
-    execute!(session.stderr)?;
+    queue!(session.chat_output.stderr(), style::Print("\n"))?;
+    execute!(session.chat_output.stderr())?;
     Ok(())
 }
 

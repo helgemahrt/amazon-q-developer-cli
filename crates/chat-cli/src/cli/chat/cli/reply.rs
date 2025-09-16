@@ -38,7 +38,7 @@ impl ReplyArgs {
             },
             None => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::warning_fg(),
                     style::Print("\nNo assistant message found to reply to.\n\n"),
                     StyledText::reset(),
@@ -54,7 +54,7 @@ impl ReplyArgs {
             Ok(content) => content,
             Err(err) => {
                 execute!(
-                    session.stderr,
+                    session.chat_output.stderr(),
                     StyledText::error_fg(),
                     style::Print(format!("\nError opening editor: {}\n\n", err)),
                     StyledText::reset(),
@@ -70,7 +70,7 @@ impl ReplyArgs {
             match content.trim().is_empty() || content.trim() == initial_text.trim() {
                 true => {
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::warning_fg(),
                         style::Print("\nNo changes made in editor, not submitting.\n\n"),
                         StyledText::reset(),
@@ -82,7 +82,7 @@ impl ReplyArgs {
                 },
                 false => {
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::success_fg(),
                         style::Print("\nContent loaded from editor. Submitting prompt...\n\n"),
                         StyledText::reset(),
@@ -90,7 +90,7 @@ impl ReplyArgs {
 
                     // Display the content as if the user typed it
                     execute!(
-                        session.stderr,
+                        session.chat_output.stderr(),
                         StyledText::reset_attributes(),
                         StyledText::emphasis_fg(),
                         style::Print("> "),

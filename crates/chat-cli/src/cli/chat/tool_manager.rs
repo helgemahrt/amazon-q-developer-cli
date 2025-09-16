@@ -54,6 +54,7 @@ use tracing::{
 };
 
 use super::tools::custom_tool::CustomToolConfig;
+use super::tools::launch_agent::SubAgentWrapper;
 use crate::api_client::model::{
     ToolResult,
     ToolResultContentBlock,
@@ -91,7 +92,6 @@ use crate::database::settings::Setting;
 use crate::mcp_client::messenger::Messenger;
 use crate::mcp_client::{
     InitializedMcpClient,
-    InnerService,
     McpClientService,
 };
 use crate::os::Os;
@@ -320,7 +320,7 @@ impl ToolManagerBuilder {
             })
             .collect::<Vec<_>>();
 
-        let mut clients = HashMap::<String, InitializedMcpClient>::new();
+        let mut clients = HashMap::<String, Arc<Mutex<InitializedMcpClient>>>::new();
         let new_tool_specs = self.new_tool_specs;
         let has_new_stuff = self.has_new_stuff;
         let pending = self.pending_clients.unwrap_or(Arc::new(RwLock::new({
@@ -404,12 +404,15 @@ impl ToolManagerBuilder {
         for (mut name, mcp_client) in pre_initialized {
             let init_res = mcp_client.init(os).await;
             match init_res {
-                Ok(mut running_service) => {
-                    while let Some(collided_service) = clients.insert(name.clone(), running_service) {
+                Ok(running_service) => {
+                    let mut current_name = name.clone();
+                    let mut current_service = Arc::new(Mutex::new(running_service));
+
+                    while let Some(collided_service) = clients.insert(current_name.clone(), current_service) {
                         // to avoid server name collision we are going to circumvent this by
                         // appending the name with 1
-                        name.push('1');
-                        running_service = collided_service;
+                        current_name.push('1');
+                        current_service = collided_service;
                     }
                 },
                 Err(e) => {
@@ -553,7 +556,8 @@ pub struct ToolManager {
 
     /// Map of server names to their corresponding client instances.
     /// These clients are used to communicate with MCP servers.
-    pub clients: HashMap<String, InitializedMcpClient>,
+    /// Wrapped in Arc<Mutex<>> to allow sharing between parent and subagent conversations.
+    pub clients: HashMap<String, Arc<Mutex<InitializedMcpClient>>>,
 
     /// A list of client names that are still in the process of being initialized
     pub pending_clients: Arc<RwLock<HashSet<String>>>,
@@ -623,6 +627,8 @@ impl Clone for ToolManager {
     fn clone(&self) -> Self {
         Self {
             conversation_id: self.conversation_id.clone(),
+            clients: self.clients.clone(),
+            pending_clients: self.pending_clients.clone(),
             has_new_stuff: self.has_new_stuff.clone(),
             new_tool_specs: self.new_tool_specs.clone(),
             tn_map: self.tn_map.clone(),
@@ -630,6 +636,7 @@ impl Clone for ToolManager {
             is_interactive: self.is_interactive,
             mcp_load_record: self.mcp_load_record.clone(),
             disabled_servers: self.disabled_servers.clone(),
+            agent: self.agent.clone(),
             ..Default::default()
         }
     }
@@ -645,41 +652,15 @@ impl ToolManager {
     /// - Swapping the old with the new (the old would be dropped after we exit the scope of this
     ///   function)
     /// - Calling load tools
-    pub async fn swap_agent(&mut self, os: &mut Os, output: &mut impl Write, agent: &Agent) -> eyre::Result<()> {
+    pub async fn swap_agent(&mut self, os: &mut Os, agent: &Agent) -> eyre::Result<Vec<String>> {
         let to_evict = self.clients.drain().collect::<Vec<_>>();
+        // Spawn a background task to clean up evicted clients
+        // The clients will be dropped when this task completes, which will trigger their cleanup
         tokio::spawn(async move {
-            for (server_name, initialized_client) in to_evict {
+            for (server_name, _initialized_client_arc) in to_evict {
                 info!("Evicting {server_name} due to agent swap");
-                match initialized_client {
-                    InitializedMcpClient::Pending(handle) => {
-                        let server_name_clone = server_name.clone();
-                        tokio::spawn(async move {
-                            match handle.await {
-                                Ok(Ok(client)) => {
-                                    let InnerService::Original(client) = client.inner_service else {
-                                        unreachable!();
-                                    };
-                                    match client.cancel().await {
-                                        Ok(_) => info!("Server {server_name_clone} evicted due to agent swap"),
-                                        Err(e) => error!("Server {server_name_clone} has failed to cancel: {e}"),
-                                    }
-                                },
-                                Ok(Err(_)) | Err(_) => {
-                                    error!("Server {server_name_clone} has failed to cancel");
-                                },
-                            }
-                        });
-                    },
-                    InitializedMcpClient::Ready(running_service) => {
-                        let InnerService::Original(client) = running_service.inner_service else {
-                            unreachable!();
-                        };
-                        match client.cancel().await {
-                            Ok(_) => info!("Server {server_name} evicted due to agent swap"),
-                            Err(e) => error!("Server {server_name} has failed to cancel: {e}"),
-                        }
-                    },
-                }
+                // When the Arc<Mutex<InitializedMcpClient>> is dropped, the client will be cleaned up
+                // No need to explicitly call cancel() as the Drop implementation handles cleanup
             }
         });
 
@@ -693,16 +674,13 @@ impl ToolManager {
         let mut new_tool_manager = builder.build(os, Box::new(std::io::sink()), true).await?;
         std::mem::swap(self, &mut new_tool_manager);
 
-        self.load_tools(os, output).await?;
+        let (_tool_specs, messages) = self.load_tools(os).await?;
 
-        Ok(())
+        Ok(messages)
     }
 
-    pub async fn load_tools(
-        &mut self,
-        os: &mut Os,
-        stderr: &mut impl Write,
-    ) -> eyre::Result<HashMap<String, ToolSpec>> {
+    pub async fn load_tools(&mut self, os: &mut Os) -> eyre::Result<(HashMap<String, ToolSpec>, Vec<String>)> {
+        let mut messages = Vec::new();
         let tx = self.loading_status_sender.take();
         let notify = self.notify.take();
         self.schema = {
@@ -766,7 +744,8 @@ impl ToolManager {
 
         // We need to cast it to erase the type otherwise the compiler will default to static
         // dispatch, which would result in an error of inconsistent match arm return type.
-        let timeout_fut: Pin<Box<dyn Future<Output = ()>>> = if self.clients.is_empty() || !self.is_first_launch {
+        let timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>> = if self.clients.is_empty() || !self.is_first_launch
+        {
             // If there is no server loaded, we want to resolve immediately
             Box::pin(future::ready(()))
         } else if self.is_interactive {
@@ -785,7 +764,7 @@ impl ToolManager {
                 .map_or(30_000_u64, |s| s as u64);
             Box::pin(tokio::time::sleep(std::time::Duration::from_millis(init_timeout)))
         };
-        let server_loading_fut: Pin<Box<dyn Future<Output = ()>>> = if let Some(notify) = notify {
+        let server_loading_fut: Pin<Box<dyn Future<Output = ()> + Send>> = if let Some(notify) = notify {
             Box::pin(async move { notify.notified().await })
         } else {
             Box::pin(future::ready(()))
@@ -804,13 +783,7 @@ impl ToolManager {
                     }
                 }
                 if !self.clients.is_empty() && !self.is_interactive {
-                    let _ = queue!(
-                        stderr,
-                        style::Print(
-                            "Not all mcp servers loaded. Configure non-interactive timeout with q settings mcp.noInteractiveTimeout"
-                        ),
-                        style::Print("\n------\n")
-                    );
+                    messages.push("Not all mcp servers loaded. Configure non-interactive timeout with q settings mcp.noInteractiveTimeout\n------".to_string());
                 }
             },
             _ = server_loading_fut => {
@@ -838,17 +811,13 @@ impl ToolManager {
                 .iter()
                 .any(|(_, records)| records.iter().any(|record| matches!(record, LoadingRecord::Err(..))))
         {
-            queue!(
-                stderr,
-                style::Print(
-                    "One or more mcp server did not load correctly. See $TMPDIR/qlog/chat.log for more details."
-                ),
-                style::Print("\n------\n")
-            )?;
+            messages.push(
+                "One or more mcp server did not load correctly. See $TMPDIR/qlog/chat.log for more details.\n------"
+                    .to_string(),
+            );
         }
-        stderr.flush()?;
         self.update().await;
-        Ok(self.schema.clone())
+        Ok((self.schema.clone(), messages))
     }
 
     pub async fn get_tool_from_tool_use(&mut self, value: AssistantToolUse) -> Result<Tool, ToolResult> {
@@ -879,6 +848,10 @@ impl ToolManager {
             "todo_list" => Tool::Todo(serde_json::from_value::<TodoList>(value.args).map_err(map_err)?),
             // Note that this name is NO LONGER namespaced with server_name{DELIMITER}tool_name
             "delegate" => Tool::Delegate(serde_json::from_value::<Delegate>(value.args).map_err(map_err)?),
+            "launch_agent" => {
+                let wrapper = serde_json::from_value::<SubAgentWrapper>(value.args).map_err(map_err)?;
+                Tool::SubAgentWrapper(wrapper.subagents)
+            },
             name => {
                 // Note: tn_map also has tools that underwent no transformation. In otherwords, if
                 // it is a valid tool name, we should get a hit.
@@ -898,7 +871,7 @@ impl ToolManager {
                         })
                     },
                 }?;
-                let Some(client) = self.clients.get_mut(server_name) else {
+                let Some(client_arc) = self.clients.get(server_name) else {
                     return Err(ToolResult {
                         tool_use_id: value.id,
                         content: vec![ToolResultContentBlock::Text(format!(
@@ -908,6 +881,7 @@ impl ToolManager {
                     });
                 };
 
+                let mut client = client_arc.lock().await;
                 let running_service = client.get_running_service().await.map_err(|e| ToolResult {
                     tool_use_id: value.id.clone(),
                     content: vec![ToolResultContentBlock::Text(format!("Mcp tool client not ready: {e}"))],
@@ -1113,7 +1087,7 @@ impl ToolManager {
                     };
 
                     let server_name = &bundle.server_name;
-                    let client = self.clients.get_mut(server_name).ok_or(GetPromptError::MissingClient)?;
+                    let client_arc = self.clients.get(server_name).ok_or(GetPromptError::MissingClient)?;
                     let PromptBundle { prompt_get, .. } = bundle;
 
                     let arguments = Self::process_prompt_arguments(&prompt_get.arguments, &arguments);
@@ -1122,6 +1096,7 @@ impl ToolManager {
                         name: prompt_name.clone(),
                         arguments,
                     };
+                    let mut client = client_arc.lock().await;
                     let running_service = client.get_running_service().await?;
                     let resp = running_service.get_prompt(params).await?;
 
