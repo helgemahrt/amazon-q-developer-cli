@@ -105,8 +105,16 @@ impl ApiClient {
         database: &mut Database,
         // endpoint is only passed here for list_profiles where it needs to be called for each region
         endpoint: Option<Endpoint>,
+        output_buffer: Option<Arc<parking_lot::Mutex<Vec<u8>>>>,
     ) -> Result<Self, ApiClientError> {
         let endpoint = endpoint.unwrap_or(Endpoint::configured_value(database));
+
+        // Create delay interceptor with optional output buffer
+        let delay_interceptor = if let Some(buffer) = output_buffer.clone() {
+            DelayTrackingInterceptor::with_output_buffer(buffer)
+        } else {
+            DelayTrackingInterceptor::new()
+        };
 
         let credentials = Credentials::new("xxx", "xxx", None, None, "xxx");
         let bearer_sdk_config = aws_config::defaults(behavior_version())
@@ -168,7 +176,7 @@ impl ApiClient {
                     .http_client(crate::aws_common::http_client::client())
                     .interceptor(OptOutInterceptor::new(database))
                     .interceptor(UserAgentOverrideInterceptor::new())
-                    .interceptor(DelayTrackingInterceptor::new())
+                    .interceptor(delay_interceptor.clone())
                     .app_name(app_name())
                     .endpoint_url(endpoint.url())
                     .retry_classifier(retry_classifier::QCliRetryClassifier::new())
@@ -182,7 +190,7 @@ impl ApiClient {
                         .http_client(crate::aws_common::http_client::client())
                         .interceptor(OptOutInterceptor::new(database))
                         .interceptor(UserAgentOverrideInterceptor::new())
-                        .interceptor(DelayTrackingInterceptor::new())
+                        .interceptor(delay_interceptor.clone())
                         .bearer_token_resolver(BearerResolver)
                         .app_name(app_name())
                         .endpoint_url(endpoint.url())
@@ -688,7 +696,7 @@ mod tests {
         let env = Env::new();
         let fs = Fs::new();
         let mut database = crate::database::Database::new().await.unwrap();
-        let _ = ApiClient::new(&env, &fs, &mut database, None).await;
+        let _ = ApiClient::new(&env, &fs, &mut database, None, None).await;
     }
 
     #[tokio::test]
@@ -696,7 +704,7 @@ mod tests {
         let env = Env::new();
         let fs = Fs::new();
         let mut database = crate::database::Database::new().await.unwrap();
-        let mut client = ApiClient::new(&env, &fs, &mut database, None).await.unwrap();
+        let mut client = ApiClient::new(&env, &fs, &mut database, None, None).await.unwrap();
         client
             .send_telemetry_event(
                 TelemetryEvent::ChatAddMessageEvent(

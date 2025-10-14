@@ -19,7 +19,7 @@ pub async fn list_available_profiles(
 ) -> Result<Vec<AuthProfile>, ApiClientError> {
     let mut profiles = vec![];
     for endpoint in Endpoint::CODEWHISPERER_ENDPOINTS {
-        let client = ApiClient::new(env, fs, database, Some(endpoint.clone())).await?;
+        let client = ApiClient::new(env, fs, database, Some(endpoint.clone()), None).await?;
         match client.list_available_profiles().await {
             Ok(mut p) => profiles.append(&mut p),
             Err(e) => tracing::error!("Failed to list profiles from endpoint {:?}: {:?}", endpoint, e),

@@ -42,10 +42,16 @@ pub struct Os {
 
 impl Os {
     pub async fn new() -> Result<Self> {
+        Self::new_with_output_buffer(None).await
+    }
+
+    pub async fn new_with_output_buffer(
+        output_buffer: Option<std::sync::Arc<parking_lot::Mutex<Vec<u8>>>>,
+    ) -> Result<Self> {
         let env = Env::new();
         let fs = Fs::new();
         let mut database = Database::new().await?;
-        let client = ApiClient::new(&env, &fs, &mut database, None).await?;
+        let client = ApiClient::new(&env, &fs, &mut database, None, output_buffer).await?;
         let telemetry = TelemetryThread::new(&env, &fs, &mut database).await?;
 
         Ok(Self {

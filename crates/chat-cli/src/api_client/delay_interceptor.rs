@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::{
     Duration,
     Instant,
@@ -17,6 +18,7 @@ use crossterm::{
     execute,
     style,
 };
+use parking_lot::Mutex;
 
 use crate::api_client::MAX_RETRY_DELAY_DURATION;
 use crate::theme::StyledText;
@@ -25,6 +27,7 @@ use crate::theme::StyledText;
 pub struct DelayTrackingInterceptor {
     minor_delay_threshold: Duration,
     major_delay_threshold: Duration,
+    output_buffer: Option<Arc<Mutex<Vec<u8>>>>,
 }
 
 impl DelayTrackingInterceptor {
@@ -32,19 +35,42 @@ impl DelayTrackingInterceptor {
         Self {
             minor_delay_threshold: Duration::from_secs(2),
             major_delay_threshold: Duration::from_secs(5),
+            output_buffer: None,
         }
     }
 
-    fn print_warning(message: String) {
-        let mut stderr = std::io::stderr();
-        let _ = execute!(
-            stderr,
-            StyledText::warning_fg(),
-            style::Print("\nWARNING: "),
-            StyledText::reset(),
-            style::Print(message),
-            style::Print("\n")
-        );
+    pub fn with_output_buffer(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
+        Self {
+            minor_delay_threshold: Duration::from_secs(2),
+            major_delay_threshold: Duration::from_secs(5),
+            output_buffer: Some(buffer),
+        }
+    }
+
+    fn print_warning(&self, message: String) {
+        if let Some(buffer) = &self.output_buffer {
+            // Write to shared buffer (subagent)
+            let mut buf = buffer.lock();
+            let _ = execute!(
+                &mut **buf,
+                StyledText::warning_fg(),
+                style::Print("\nWARNING: "),
+                StyledText::reset(),
+                style::Print(message),
+                style::Print("\n")
+            );
+        } else {
+            // Write to stderr (main agent)
+            let mut stderr = std::io::stderr();
+            let _ = execute!(
+                stderr,
+                StyledText::warning_fg(),
+                style::Print("\nWARNING: "),
+                StyledText::reset(),
+                style::Print(message),
+                style::Print("\n")
+            );
+        }
     }
 }
 
@@ -67,13 +93,13 @@ impl Intercept for DelayTrackingInterceptor {
             let delay = now.duration_since(last_attempt_time.0).min(MAX_RETRY_DELAY_DURATION);
 
             if delay >= self.major_delay_threshold {
-                Self::print_warning(format!(
+                self.print_warning(format!(
                     "Retry #{}, retrying within {:.1}s..",
                     attempt_number,
                     MAX_RETRY_DELAY_DURATION.as_secs_f64()
                 ));
             } else if delay >= self.minor_delay_threshold {
-                Self::print_warning(format!("Retry #{}, retrying within 5s..", attempt_number,));
+                self.print_warning(format!("Retry #{}, retrying within 5s..", attempt_number,));
             }
         }
 

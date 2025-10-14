@@ -2,12 +2,7 @@ use std::collections::{
     HashMap,
     VecDeque,
 };
-use std::io::{
-    BufRead,
-    Write,
-};
-
-use bytes::Buf;
+use std::io::Write;
 use crossterm::style::{
     self,
     Attribute,
@@ -316,7 +311,7 @@ impl SubAgent {
 
     #[allow(clippy::too_many_arguments)]
     pub fn spawn_subagent(
-        os: &Os,
+        _os: &Os,
         prompt: String,
         agent_display_name: &str,
         agent_cli_name: Option<String>,
@@ -348,12 +343,21 @@ impl SubAgent {
             subagent_conversation_state.agents.switch(&agent_name)?;
         }
 
-        let mut subagent_os = os.clone();
-
         let display_name = agent_display_name.to_owned().replace(" ", "_");
 
         let handle = tokio::task::spawn(async move {
+            // Create BufferedIO with shared buffer
             let subagent_output = ChatIO::BufferedIO(BufferedIO::new());
+
+            // Get reference to shared buffer for Os
+            let output_buffer = if let ChatIO::BufferedIO(ref buffered) = subagent_output {
+                Some(buffered.buffer.clone())
+            } else {
+                None
+            };
+
+            // Create new Os with output buffer so warnings go to BufferedIO
+            let mut subagent_os = Os::new_with_output_buffer(output_buffer).await?;
 
             let mut subagent_session = ChatSession {
                 chat_output: subagent_output,
@@ -382,11 +386,10 @@ impl SubAgent {
             let result = Self::run_subagent_loop(&mut subagent_os, &mut subagent_session, agent_id, &status_tx).await;
 
             let mut output = String::new();
-            let mut line = String::new();
 
             if let ChatIO::BufferedIO(buf_io) = &subagent_session.chat_output {
-                let my_buf = buf_io.buffer.clone();
-                let mut reader = my_buf.reader();
+                // Lock the buffer and read its contents
+                let buffer_contents = buf_io.buffer.lock().clone();
 
                 // If no SUMMARY tag in response, pass whole response as summary to orchestrator
                 let mut debug_log = std::fs::OpenOptions::new()
@@ -396,10 +399,12 @@ impl SubAgent {
 
                 writeln!(debug_log, "{}", &prompt)?;
 
-                while reader.read_line(&mut line)? > 0 {
-                    writeln!(debug_log, "{}", line.trim_end())?;
-                    output.push_str(&line);
-                    line.clear();
+                // Convert buffer to string
+                output = String::from_utf8_lossy(&buffer_contents).to_string();
+
+                // Write to debug log
+                for line in output.lines() {
+                    writeln!(debug_log, "{}", line)?;
                 }
 
                 // TODO: compile regex only once

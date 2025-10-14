@@ -1,4 +1,7 @@
 use std::io::Write;
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 /// Trait for handling output operations in chat sessions
 pub trait ChatOutput {
@@ -31,14 +34,45 @@ impl ChatOutput for StandardIO {
     }
 }
 
+/// Wrapper type that implements Write for Arc<Mutex<Vec<u8>>>
+pub struct SharedVecWriter {
+    buffer: Arc<Mutex<Vec<u8>>>,
+}
+
+impl Write for SharedVecWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.buffer.lock().write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.buffer.lock().flush()
+    }
+}
+
 /// Buffered I/O implementation for non-interactive sessions
 pub struct BufferedIO {
-    pub buffer: Vec<u8>,
+    pub buffer: Arc<Mutex<Vec<u8>>>,
+    // Cache writer instances to avoid recreating them
+    stdout_writer: SharedVecWriter,
+    stderr_writer: SharedVecWriter,
 }
 
 impl BufferedIO {
     pub fn new() -> Self {
-        Self { buffer: Vec::new() }
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        Self {
+            stdout_writer: SharedVecWriter { buffer: buffer.clone() },
+            stderr_writer: SharedVecWriter { buffer: buffer.clone() },
+            buffer,
+        }
+    }
+
+    pub fn with_shared_buffer(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
+        Self {
+            stdout_writer: SharedVecWriter { buffer: buffer.clone() },
+            stderr_writer: SharedVecWriter { buffer: buffer.clone() },
+            buffer,
+        }
     }
 }
 
@@ -49,15 +83,15 @@ impl Default for BufferedIO {
 }
 
 impl ChatOutput for BufferedIO {
-    type ErrWriter = Vec<u8>;
-    type OutWriter = Vec<u8>;
+    type ErrWriter = SharedVecWriter;
+    type OutWriter = SharedVecWriter;
 
     fn stdout(&mut self) -> &mut Self::OutWriter {
-        &mut self.buffer
+        &mut self.stdout_writer
     }
 
     fn stderr(&mut self) -> &mut Self::ErrWriter {
-        &mut self.buffer
+        &mut self.stderr_writer
     }
 }
 
@@ -120,7 +154,7 @@ mod tests {
     #[test]
     fn test_buffered_io_new() {
         let buffered_io = BufferedIO::new();
-        assert!(buffered_io.buffer.is_empty());
+        assert!(buffered_io.buffer.lock().is_empty());
     }
 
     #[test]
@@ -129,7 +163,7 @@ mod tests {
         let test_data = b"Hello stdout!";
 
         buffered_io.stdout().write_all(test_data).unwrap();
-        assert_eq!(buffered_io.buffer, test_data);
+        assert_eq!(*buffered_io.buffer.lock(), test_data);
     }
 
     #[test]
@@ -138,7 +172,7 @@ mod tests {
         let test_data = b"Hello stderr!";
 
         buffered_io.stderr().write_all(test_data).unwrap();
-        assert_eq!(buffered_io.buffer, test_data);
+        assert_eq!(*buffered_io.buffer.lock(), test_data);
     }
 
     #[test]
@@ -148,7 +182,7 @@ mod tests {
         buffered_io.stdout().write_all(b"First ").unwrap();
         buffered_io.stdout().write_all(b"Second").unwrap();
 
-        assert_eq!(buffered_io.buffer, b"First Second");
+        assert_eq!(*buffered_io.buffer.lock(), b"First Second");
     }
 
     #[test]
@@ -156,7 +190,7 @@ mod tests {
         let mut buffered_io = BufferedIO::new();
 
         execute!(buffered_io.stdout(), style::Print("Hello World!")).unwrap();
-        assert_eq!(buffered_io.buffer, b"Hello World!");
+        assert_eq!(*buffered_io.buffer.lock(), b"Hello World!");
     }
 
     #[test]
@@ -166,7 +200,7 @@ mod tests {
         buffered_io.stdout().write_all(b"stdout data").unwrap();
         buffered_io.stderr().write_all(b"stderr data").unwrap();
 
-        assert_eq!(buffered_io.buffer, b"stdout datastderr data");
+        assert_eq!(*buffered_io.buffer.lock(), b"stdout datastderr data");
     }
 
     #[test]
@@ -178,7 +212,7 @@ mod tests {
         stdout_writer.write_all(b"test data").unwrap();
 
         if let ChatIO::BufferedIO(ref buffered) = chat_io {
-            assert_eq!(buffered.buffer, b"test data");
+            assert_eq!(*buffered.buffer.lock(), b"test data");
         } else {
             panic!("Expected BufferedIO variant");
         }
@@ -193,7 +227,7 @@ mod tests {
         stderr_writer.write_all(b"error data").unwrap();
 
         if let ChatIO::BufferedIO(ref buffered) = chat_io {
-            assert_eq!(buffered.buffer, b"error data");
+            assert_eq!(*buffered.buffer.lock(), b"error data");
         } else {
             panic!("Expected BufferedIO variant");
         }
@@ -228,7 +262,7 @@ mod tests {
         let mut buffered_io = BufferedIO::new();
 
         buffered_io.stdout().write_all(b"").unwrap();
-        assert!(buffered_io.buffer.is_empty());
+        assert!(buffered_io.buffer.lock().is_empty());
     }
 
     #[test]
@@ -237,8 +271,8 @@ mod tests {
         let large_data = vec![b'x'; 10000];
 
         buffered_io.stdout().write_all(&large_data).unwrap();
-        assert_eq!(buffered_io.buffer.len(), 10000);
-        assert_eq!(buffered_io.buffer, large_data);
+        assert_eq!(buffered_io.buffer.lock().len(), 10000);
+        assert_eq!(*buffered_io.buffer.lock(), large_data);
     }
 
     #[test]
@@ -247,7 +281,7 @@ mod tests {
         let binary_data = vec![0u8, 255u8, 128u8, 42u8];
 
         buffered_io.stdout().write_all(&binary_data).unwrap();
-        assert_eq!(buffered_io.buffer, binary_data);
+        assert_eq!(*buffered_io.buffer.lock(), binary_data);
     }
 
     #[test]
@@ -257,7 +291,7 @@ mod tests {
         buffered_io.stdout().write_all(b"test").unwrap();
         let result = buffered_io.stdout().flush();
         assert!(result.is_ok());
-        assert_eq!(buffered_io.buffer, b"test");
+        assert_eq!(*buffered_io.buffer.lock(), b"test");
     }
 
     #[test]
@@ -295,7 +329,7 @@ mod tests {
         let stdout_ref2 = buffered_io.stdout();
         stdout_ref2.write_all(b" second").unwrap();
 
-        assert_eq!(buffered_io.buffer, b"firsterror second");
+        assert_eq!(*buffered_io.buffer.lock(), b"firsterror second");
     }
 
     #[test]
@@ -303,6 +337,7 @@ mod tests {
         fn test_write_bound<W: Write + Send>(_writer: W) {}
 
         let buffered_io = BufferedIO::new();
-        test_write_bound(buffered_io.buffer);
+        let buffer_clone = buffered_io.buffer.clone();
+        test_write_bound(buffer_clone.lock().clone());
     }
 }

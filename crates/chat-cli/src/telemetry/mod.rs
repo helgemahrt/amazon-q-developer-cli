@@ -554,7 +554,7 @@ impl TelemetryClient {
         let codewhisperer_client = if env.get("AMAZON_Q_SIGV4").is_ok() {
             None
         } else {
-            Some(ApiClient::new(env, fs, database, None).await?)
+            Some(ApiClient::new(env, fs, database, None, None).await?)
         };
 
         Ok(Self {
