@@ -401,7 +401,7 @@ impl ToolManagerBuilder {
             })
             .collect::<Vec<_>>();
 
-        for (mut name, mcp_client) in pre_initialized {
+        for (name, mcp_client) in pre_initialized {
             let init_res = mcp_client.init(os).await;
             match init_res {
                 Ok(running_service) => {

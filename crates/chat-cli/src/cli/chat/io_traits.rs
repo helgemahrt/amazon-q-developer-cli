@@ -66,14 +66,6 @@ impl BufferedIO {
             buffer,
         }
     }
-
-    pub fn with_shared_buffer(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
-        Self {
-            stdout_writer: SharedVecWriter { buffer: buffer.clone() },
-            stderr_writer: SharedVecWriter { buffer: buffer.clone() },
-            buffer,
-        }
-    }
 }
 
 impl Default for BufferedIO {

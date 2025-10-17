@@ -377,10 +377,8 @@ impl SubAgent {
                 pending_prompts: VecDeque::new(),
                 interactive: false,
                 inner: Some(ChatState::HandleInput { input: prompt.clone() }),
-                last_tool_use: None,
                 ctrlc_rx,
                 wrap: None,
-                status_sender: Some((agent_id, status_tx.clone())),
             };
 
             let result = Self::run_subagent_loop(&mut subagent_os, &mut subagent_session, agent_id, &status_tx).await;
@@ -405,6 +403,10 @@ impl SubAgent {
                 // Write to debug log
                 for line in output.lines() {
                     writeln!(debug_log, "{}", line)?;
+                }
+
+                if let Err(report) = &result {
+                    writeln!(debug_log, "{}", &report)?;
                 }
 
                 // TODO: compile regex only once

@@ -598,10 +598,8 @@ pub struct ChatSession {
     pending_prompts: VecDeque<PromptMessage>,
     interactive: bool,
     inner: Option<ChatState>,
-    last_tool_use: Option<(String, String)>,
     ctrlc_rx: broadcast::Receiver<()>,
     wrap: Option<WrapMode>,
-    status_sender: Option<(usize, tokio::sync::mpsc::UnboundedSender<StatusUpdate>)>,
 }
 
 impl ChatSession {
@@ -721,10 +719,8 @@ impl ChatSession {
             pending_prompts: VecDeque::new(),
             interactive,
             inner: Some(ChatState::default()),
-            last_tool_use: None,
             ctrlc_rx,
             wrap,
-            status_sender: None,
         })
     }
 
